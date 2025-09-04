@@ -21,12 +21,12 @@ export function EmbeddingStatusBanner({ projectId, onStatusChange }: EmbeddingSt
   const [status, setStatus] = useState<EmbeddingStatus | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "https://retail-ai-chatbot.onrender.com"
   const fetchStatus = async () => {
     try {
       const token = localStorage.getItem('access_token');
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/documents/project/${projectId}/embedding-status`,
+        `${API_BASE_URL}/documents/project/${projectId}/embedding-status`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,

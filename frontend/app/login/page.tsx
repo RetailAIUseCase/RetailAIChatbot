@@ -38,7 +38,7 @@ export default function LoginPage() {
   const [fullName, setFullName] = useState("")
 
   // API base URL
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://retail-ai-chatbot.onrender.com"
 
 
   const handleLogin = async (e: React.FormEvent) => {

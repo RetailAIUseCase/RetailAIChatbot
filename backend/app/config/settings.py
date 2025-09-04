@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     
     # CORS configuration
-    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://retail-ai-chatbot.vercel.app")
 
     # For production deployment (Railway/Vercel)
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS: list = [
         "http://localhost:3000",
-        "https://your-frontend-domain.vercel.app"
+        "https://retail-ai-chatbot.vercel.app"
     ]
     
     def validate_settings(self) -> bool:

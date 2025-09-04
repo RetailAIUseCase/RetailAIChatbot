@@ -126,9 +126,9 @@ export function DocumentUploadDialog({
       })
 
       const token = localStorage.getItem('access_token')
-      
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "https://retail-ai-chatbot.onrender.com"
       // **FIXED: Proper API URL and headers**
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/documents/upload`, {
+      const response = await fetch(`${API_BASE_URL}/documents/upload`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

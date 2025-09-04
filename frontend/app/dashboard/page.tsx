@@ -108,7 +108,7 @@ export default function DashboardPage() {
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
 
   // API base URL
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "https://retail-ai-chatbot.onrender.com"
   
   // Project State
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)

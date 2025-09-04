@@ -87,12 +87,12 @@ async def health_check():
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
-# For Railway deployment
+# For deployment
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",  # Important for Railway deployment
+        host="0.0.0.0",  # Important for deployment
         port=settings.PORT,
         reload=settings.ENVIRONMENT == "development"
     )
