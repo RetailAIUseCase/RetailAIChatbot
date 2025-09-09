@@ -235,7 +235,7 @@ class Database:
                     content TEXT NOT NULL,
                     sql_query TEXT,
                     query_result JSONB,
-                    intent VARCHAR(100),
+                    intent TEXT,
                     tables_used TEXT[],
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
