@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 from app.utils.auth_utils import get_current_user
 from app.config.settings import settings
 from app.services.rag_sql_service import rag_sql_service
+from app.database.connection import db
 import logging
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,6 @@ async def chat_with_database(
             top_k=settings.TOP_K,
             similarity_threshold=settings.SIMILARITY_THRESHOLD
         )
-        
         # Generate SQL response
         response = await rag_sql_service.process_user_query(
             user_query=chat_request.message,
@@ -66,16 +66,16 @@ async def chat_with_database(
             user_id=user["id"],
             project_id=chat_request.project_id
         )
-        sample_data = None
-        total_rows = None
-        if response.get("query_result") and response["query_result"].get("success"):
-            data = response["query_result"]["data"]
-            if len(data) > 10:
-                # Limit sample data to first 10 rows for preview
-                sample_data = data[:10]  # First 10 rows for preview
-            else:
-                sample_data = data
-            total_rows = len(data)
+        # sample_data = None
+        # total_rows = None
+        # if response.get("query_result") and response["query_result"].get("success"):
+        #     data = response["query_result"]["data"]
+        #     if len(data) > 10:
+        #         # Limit sample data to first 10 rows for preview
+        #         sample_data = data[:10]  # First 10 rows for preview
+        #     else:
+        #         sample_data = data
+        #     total_rows = len(data)
         # Prepare retrieval statistics
         # retrieval_stats = {
         #     "total_results": relevant_data.get("total_results", 0),
@@ -104,8 +104,8 @@ async def chat_with_database(
             query_result=response.get("query_result"),
             final_answer=response.get("final_answer", response.get("explanation", "")),
             confidence=response.get("confidence", 0.8),
-            sample_data=sample_data,
-            total_rows=total_rows,
+            sample_data=response.get("sample_data",[]),
+            total_rows=response.get("total_rows",0),
             # retrieval_stats=retrieval_stats,
             # context_sources=context_sources
         )
@@ -116,25 +116,71 @@ async def chat_with_database(
         logger.error(f"SQL chat error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/history/{project_id}")
-async def get_chat_history(
+@router.get("/conversations/{project_id}")
+async def get_project_conversations(
     project_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Get chat history for a project"""
+    """Get all conversations for a project"""
     try:
         user = await get_current_user(credentials.credentials)
         if not user:
             raise HTTPException(status_code=401, detail="Invalid authentication")
-        
-        history = await rag_sql_service.get_conversation_history(user["id"], project_id)
-        return {"history": history}
-        
+
+        conversations = await db.get_user_conversations(user["id"], project_id)
+        return {"conversations": conversations}
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Get chat history error: {e}")
+        logger.error(f"Get conversations error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/conversation/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Get all messages for a specific conversation"""
+    try:
+        user = await get_current_user(credentials.credentials)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid authentication")
+
+        messages = await db.get_conversation_messages(conversation_id, user["id"])
+        return {"messages": messages}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get conversation messages error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.delete("/conversation/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Delete a conversation and all its messages"""
+    try:
+        user = await get_current_user(credentials.credentials)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid authentication")
+
+        # Delete conversation (messages will be deleted via CASCADE)
+        deleted = await db.delete_conversation(conversation_id, user["id"])
+        
+        if deleted:
+            return {"message": "Conversation deleted successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete conversation error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
     
 # Additional endpoints for enhanced functionality
 

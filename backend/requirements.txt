@@ -16,3 +16,4 @@ pgvector>=0.2.0
 # Document Processing Libraries
 PyPDF2==3.0.1
 python-docx==1.1.0
+simplejson

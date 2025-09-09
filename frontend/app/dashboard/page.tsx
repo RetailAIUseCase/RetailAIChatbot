@@ -90,6 +90,15 @@ interface EmbeddingStatus {
   failed: number
   pending: number
 }
+interface Conversation {
+  id: string
+  title: string
+  project_id: string
+  created_at: string
+  updated_at: string
+  message_count: number
+}
+
 export default function DashboardPage() {
   const router = useRouter()
   // User state
@@ -119,6 +128,10 @@ export default function DashboardPage() {
   const [newProjectDescription, setNewProjectDescription] = useState("")
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   
+  // Add conversation states
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+
   // Delete project state
   const [deleteDialog, setDeleteDialog] = useState<{
     isOpen: boolean
@@ -671,7 +684,57 @@ export default function DashboardPage() {
 
     return () => clearInterval(interval)
   }, [selectedProject?.id, API_BASE_URL])
-  
+
+  // Load conversations when project changes
+  useEffect(() => {
+    // Always reset conversation state immediately
+    setCurrentConversationId(null)
+    setConversations([])
+    
+    if (selectedProject?.id) {
+      loadProjectConversations()
+    }
+  }, [selectedProject?.id])
+
+  const loadProjectConversations = async () => {
+    if (!selectedProject?.id) return
+    
+    try {
+      const token = localStorage.getItem('access_token')
+      const response = await fetch(`${API_BASE_URL}/chat/conversations/${selectedProject.id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        setConversations(data.conversations || [])
+        // Reset to null first, then auto-select if conversations exist
+        setCurrentConversationId(null)
+        // Auto-select the most recent conversation if available
+        if (data.conversations.length > 0) {
+          setTimeout(() => {
+          setCurrentConversationId(data.conversations[0].id)
+        }, 0)
+        }
+      } else {
+        console.error('❌ Failed to load conversations:', response.status)
+        setConversations([])
+      }
+    } catch (error) {
+      console.error('Error loading conversations:', error)
+      setConversations([])
+    }
+  }
+  const handleConversationChange = (conversationId: string | null) => {
+    setCurrentConversationId(conversationId)
+    // The ChatInterface will handle loading messages
+  }
+
+  const handleNewConversation = () => {
+    setCurrentConversationId(null)
+    // This will trigger a "New Chat" in the ChatInterface
+  }
+
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden min-h-screen">
       {/* Header */}
@@ -1032,8 +1095,14 @@ export default function DashboardPage() {
             onStatusChange={setIsEmbeddingProcessing}
           />
         )}
-          <ChatInterface selectedProject={selectedProject}
-           isEmbeddingProcessing={isEmbeddingProcessing} />
+          <ChatInterface 
+            key={selectedProject?.id || 'default'}
+            selectedProject={selectedProject}
+            isEmbeddingProcessing={isEmbeddingProcessing}
+            conversations={conversations}
+            currentConversationId={currentConversationId}
+            onConversationChange={handleConversationChange}
+            onNewConversation={handleNewConversation} />
         </main>
 
         {/* Right Panel - Download Management */}

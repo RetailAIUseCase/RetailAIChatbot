@@ -23,7 +23,6 @@ async def lifespan(app: FastAPI):
     try:
         settings.validate_settings()
         await db.connect()
-        # await db.create_all_tables()  # To create all the tables
         logger.info("Application startup completed")
         yield
     except Exception as e:

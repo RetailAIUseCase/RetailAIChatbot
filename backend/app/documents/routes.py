@@ -334,7 +334,6 @@ async def get_embedding_status(
             )
         
         status = await db.get_project_embedding_status(project_id, user["id"])
-        
         return {
             "success": True,
             "embedding_status": status,

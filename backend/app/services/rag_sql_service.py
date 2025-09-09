@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 from typing import Dict, List, Any, Optional, Tuple
+import uuid
 from openai import AsyncOpenAI
 from app.database.connection import db
 from app.config.settings import settings
@@ -15,11 +16,10 @@ logger = logging.getLogger(__name__)
 class SQLRAGService:
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self.conversation_memory = {}  # Store conversation history
+        # self.conversation_memory = {}  # Store conversation history
         self.Embedding_model = settings.EMBED_MODEL
         self.LLM_model = settings.LLM_MODEL
         self.NLP_LLM_model = settings.NLP_LLM_MODEL
-        self.top_k = settings.TOP_K
         self.embedding_dimensions = settings.EMBEDDING_DIMENSIONS
 
     async def embed_query(self, query: str) -> List[float]:
@@ -40,7 +40,7 @@ class SQLRAGService:
         user_id: int, 
         project_id: str,
         top_k: int, 
-        similarity_threshold: float = 0.3
+        similarity_threshold: float
     ) -> Dict[str, Any]:
         """Enhanced retrieval from multiple embedding tables"""
         if not db.pool:
@@ -52,18 +52,18 @@ class SQLRAGService:
                 
                 # Phase 1: Retrieve from metadata embeddings (tables, columns, relationships)
                 metadata_results = await self._retrieve_metadata_embeddings(
-                    connection, query_embedding, user_id, project_id, top_k
+                    connection, query_embedding, user_id, project_id, top_k, similarity_threshold
                 )
                 # print(metadata_results)
 
                 # Phase 2: Retrieve from business logic embeddings  
                 business_logic_results = await self._retrieve_business_logic_embeddings(
-                    connection, query_embedding, user_id, project_id, top_k//2
+                    connection, query_embedding, user_id, project_id, top_k//2, similarity_threshold
                 )
                 
                 # Phase 3: Retrieve from reference embeddings
                 reference_results = await self._retrieve_reference_embeddings(
-                    connection, query_embedding, user_id, project_id, top_k//3
+                    connection, query_embedding, user_id, project_id, top_k//3, similarity_threshold
                 )
                 
                 return {
@@ -85,7 +85,7 @@ class SQLRAGService:
         
 
     async def _retrieve_metadata_embeddings(
-        self, connection, query_embedding: List[float], user_id: int, project_id: str, top_k: int
+        self, connection, query_embedding: List[float], user_id: int, project_id: str, top_k: int, similarity_threshold: float
     ) -> List[Dict]:
         """Retrieve from metadata embeddings with hierarchical approach"""
         # Convert embedding list to pgvector format
@@ -101,12 +101,12 @@ class SQLRAGService:
             (1 - (embedding <=> $1)) as similarity
         FROM metadata_embeddings 
         WHERE user_id = $2 AND project_id = $3 AND content_type = 'table'
-            AND (1 - (embedding <=> $1)) >= 0.2  -- Similarity threshold
+            AND (1 - (embedding <=> $1)) >= $5  -- Similarity threshold
         ORDER BY embedding <=> $1
         LIMIT $4
         """
         
-        table_results = await connection.fetch(table_query, query_embedding, user_id, project_id, top_k)
+        table_results = await connection.fetch(table_query, query_embedding, user_id, project_id, top_k, similarity_threshold)
         
         if not table_results:
             return []
@@ -197,7 +197,7 @@ class SQLRAGService:
         # ]
 
     async def _retrieve_business_logic_embeddings(
-        self, connection, query_embedding: List[float], user_id: int, project_id: str, top_k: int
+        self, connection, query_embedding: List[float], user_id: int, project_id: str, top_k: int, similarity_threshold: float
     ) -> List[Dict]:
         """Retrieve from business logic embeddings"""
         # embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
@@ -206,9 +206,11 @@ class SQLRAGService:
             rule_number,
             content,
             metadata,
-            (embedding <=> $1) as distance
+            (embedding <=> $1) as distance,
+            (1 - (embedding <=> $1)) as similarity
         FROM business_logic_embeddings 
         WHERE user_id = $2 AND project_id = $3
+            AND (1 - (embedding <=> $1)) >= $5  -- Similarity threshold
         ORDER BY embedding <=> $1
         LIMIT $4
         """
@@ -228,7 +230,7 @@ class SQLRAGService:
         # LIMIT $4
         # """
         
-        results = await connection.fetch(query, query_embedding, user_id, project_id, top_k)
+        results = await connection.fetch(query, query_embedding, user_id, project_id, top_k, similarity_threshold)
         # print(results)
         return [
             {
@@ -241,7 +243,7 @@ class SQLRAGService:
         ]
 
     async def _retrieve_reference_embeddings(
-        self, connection, query_embedding: List[float], user_id: int, project_id: str, top_k: int
+        self, connection, query_embedding: List[float], user_id: int, project_id: str, top_k: int, similarity_threshold: float
     ) -> List[Dict]:
         """Retrieve from reference embeddings"""
         # embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
@@ -250,14 +252,16 @@ class SQLRAGService:
             chunk_index,
             content,
             metadata,
-            (embedding <=> $1) as distance
+            (embedding <=> $1) as distance,
+            (1 - (embedding <=> $1)) as similarity
         FROM reference_embeddings 
         WHERE user_id = $2 AND project_id = $3
+            AND (1 - (embedding <=> $1)) >= $5  -- Similarity threshold
         ORDER BY embedding <=> $1
         LIMIT $4
         """
         
-        results = await connection.fetch(query, query_embedding, user_id, project_id, top_k)
+        results = await connection.fetch(query, query_embedding, user_id, project_id, top_k, similarity_threshold)
         
         return [
             {
@@ -331,7 +335,7 @@ class SQLRAGService:
         context = ""
         if conversation_history:
             context = "**Previous Conversation Context:**\n"
-            for msg in conversation_history[-6:]:  # Last 6 messages
+            for msg in conversation_history:  # Last 6 messages
                 if msg['role'] == 'user':
                     context += f"User: {msg['content']}\n"
                 elif msg['role'] == 'assistant':
@@ -350,8 +354,6 @@ class SQLRAGService:
         user_query: str, 
         relevant_data: Dict[str, Any],
         conversation_history: List[Dict],
-        user_id: int,
-        project_id: str
     ) -> Dict[str, Any]:
         """Generate SQL query and natural language response"""
         
@@ -468,9 +470,6 @@ class SQLRAGService:
             else:
                 result["final_answer"] = result["explanation"]
             
-            # Store conversation in memory
-            await self.store_conversation(user_id, project_id, user_query, result)
-            
             return result
             
         except Exception as e:
@@ -572,55 +571,122 @@ class SQLRAGService:
             return response.choices[0].message.content.strip()
         except Exception as e:
             return f"Based on the query results, I found {len(query_results)} records. {explanation}"
-    
-    async def store_conversation(self, user_id: int, project_id: str, query: str, response: Dict):
-        """Store conversation for context in future queries"""
-        conversation_key = f"{user_id}_{project_id}"
         
-        if conversation_key not in self.conversation_memory:
-            self.conversation_memory[conversation_key] = []
-        
-        # Add user message
-        self.conversation_memory[conversation_key].append({
-            "role": "user",
-            "content": query,
-            "timestamp": asyncio.get_event_loop().time()
-        })
-        
-        # Add assistant response
-        # Add assistant response with enhanced context
-        assistant_message = {
-            "role": "assistant",
-            "content": response.get("final_answer", response.get("explanation", "")),
-            "intent": response.get("intent"),
-            "timestamp": asyncio.get_event_loop().time()
-        }
-        
-        # Include SQL query and results if available
-        if response.get("sql_query"):
-            assistant_message["sql_query"] = response["sql_query"]
-            assistant_message["tables_used"] = response.get("tables_used", [])
-            assistant_message["business_rules_applied"] = response.get("business_rules_applied", [])
+    async def get_or_create_conversation(self, user_id: int, project_id: str, user_query: str) -> str:
+        """Get the latest conversation or create a new one"""
+        try:
+            # Get latest conversation for this project
+            conversations = await db.get_user_conversations(user_id, project_id)
             
-        if response.get("query_result"):
-            # Store a summary of results, not full data
-            result_summary = {
-                "success": response["query_result"].get("success"),
-                "row_count": response["query_result"].get("row_count", 0),
-                "error": response["query_result"].get("error") if not response["query_result"].get("success") else None
-            }
-            assistant_message["query_result_summary"] = result_summary
+            if conversations:
+                # Use the most recent conversation
+                return conversations[0]['id']
+            else:
+                # Create new conversation with title from first query
+                title = user_query[:50] + "..." if len(user_query) > 50 else user_query
+                conversation = await db.create_conversation(user_id, project_id, title)
+                return conversation['id']
+        except Exception as e:
+            logger.error(f"Error managing conversation: {e}")
+            # Fallback to UUID
+            return str(uuid.uuid4())
+
+    async def store_conversation(self, conversation_id: str, user_id: int, project_id: str, query: str, response: Dict):
+        """Store conversation in database"""
+        try:
+            # Store user message
+            await db.store_chat_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                project_id=project_id,
+                role='user',
+                content=query
+            )
+            
+            # Store assistant response
+            await db.store_chat_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                project_id=project_id,
+                role='assistant',
+                content=response.get("final_answer", response.get("explanation", "")),
+                sql_query=response.get("sql_query"),
+                query_result=response.get("query_result"),
+                intent=response.get("intent"),
+                tables_used=response.get("tables_used", [])
+            )
+        except Exception as e:
+            logger.error(f"Error storing conversation: {e}")
+
+    async def get_conversation_history(self, conversation_id: str, user_id: int) -> List[Dict]:
+        """Get conversation history from database"""
+        try:
+            messages = await db.get_conversation_messages(conversation_id, user_id)
+            
+            # Convert to format expected by the chat
+            conversation_history = []
+            for msg in messages:
+                conversation_history.append({
+                    'role': msg['role'],
+                    'content': msg['content'],
+                    'sql_query': msg.get('sql_query'),
+                    'intent': msg.get('intent'),
+                    'timestamp': msg['created_at']
+                })
+            
+            return conversation_history
+        except Exception as e:
+            logger.error(f"Error fetching conversation history: {e}")
+            return []
         
-        self.conversation_memory[conversation_key].append(assistant_message)
+    # async def store_conversation(self, user_id: int, project_id: str, query: str, response: Dict):
+    #     """Store conversation for context in future queries"""
+    #     conversation_key = f"{user_id}_{project_id}"
         
-        # Keep only last 20 messages to manage memory
-        if len(self.conversation_memory[conversation_key]) > 20:
-            self.conversation_memory[conversation_key] = self.conversation_memory[conversation_key][-20:]
+    #     if conversation_key not in self.conversation_memory:
+    #         self.conversation_memory[conversation_key] = []
+        
+    #     # Add user message
+    #     self.conversation_memory[conversation_key].append({
+    #         "role": "user",
+    #         "content": query,
+    #         "timestamp": asyncio.get_event_loop().time()
+    #     })
+        
+    #     # Add assistant response
+    #     # Add assistant response with enhanced context
+    #     assistant_message = {
+    #         "role": "assistant",
+    #         "content": response.get("final_answer", response.get("explanation", "")),
+    #         "intent": response.get("intent"),
+    #         "timestamp": asyncio.get_event_loop().time()
+    #     }
+        
+    #     # Include SQL query and results if available
+    #     if response.get("sql_query"):
+    #         assistant_message["sql_query"] = response["sql_query"]
+    #         assistant_message["tables_used"] = response.get("tables_used", [])
+    #         assistant_message["business_rules_applied"] = response.get("business_rules_applied", [])
+            
+    #     if response.get("query_result"):
+    #         # Store a summary of results, not full data
+    #         result_summary = {
+    #             "success": response["query_result"].get("success"),
+    #             "row_count": response["query_result"].get("row_count", 0),
+    #             "error": response["query_result"].get("error") if not response["query_result"].get("success") else None
+    #         }
+    #         assistant_message["query_result_summary"] = result_summary
+        
+    #     self.conversation_memory[conversation_key].append(assistant_message)
+        
+    #     # Keep only last 20 messages to manage memory
+    #     if len(self.conversation_memory[conversation_key]) > 20:
+    #         self.conversation_memory[conversation_key] = self.conversation_memory[conversation_key][-20:]
     
-    async def get_conversation_history(self, user_id: int, project_id: str) -> List[Dict]:
-        """Get conversation history for context"""
-        conversation_key = f"{user_id}_{project_id}"
-        return self.conversation_memory.get(conversation_key, [])
+    # async def get_conversation_history(self, user_id: int, project_id: str) -> List[Dict]:
+    #     """Get conversation history for context"""
+    #     conversation_key = f"{user_id}_{project_id}"
+    #     return self.conversation_memory.get(conversation_key, [])
     
 
     # **NEW: Intent Detection**
@@ -759,8 +825,12 @@ class SQLRAGService:
         """Main entry point that handles all types of queries"""
         
         try:
-            # Get conversation history
-            conversation_history = await self.get_conversation_history(user_id, project_id)
+             # Get or create conversation
+            conversation_id = await self.get_or_create_conversation(user_id, project_id, user_query)
+            
+            # Get conversation history for context (last 10 messages)
+            conversation_history = await self.get_conversation_history(conversation_id, user_id)
+            conversation_history = conversation_history[-10:]  # Keep last 10 for context
 
             # Detect intent
             intent = await self.detect_query_intent(user_query, conversation_history)
@@ -788,17 +858,33 @@ class SQLRAGService:
                 }
                 
             else:  # sql_query intent
-                # Use existing SQL generation flow
+                # SQL generation flow
                 result = await self.generate_sql_response(
                     user_query,
                     relevant_data,
-                    conversation_history,
-                    user_id,
-                    project_id
+                    conversation_history
                 )
             
+            if result.get("query_result") and result["query_result"].get("success"):
+                data = result["query_result"]["data"]
+                row_count = len(data)
+                
+                # Store nested (existing behavior)
+                if row_count > 10:
+                    result["query_result"]["sample_data"] = data[:10]
+                else:
+                    result["query_result"]["sample_data"] = data
+                result["query_result"]["row_count"] = row_count
+                
+                # Also store at top level for easy access
+                result["sample_data"] = result["query_result"]["sample_data"]
+                result["total_rows"] = row_count
+
             # Step 3: Store conversation
-            await self.store_conversation(user_id, project_id, user_query, result)
+            await self.store_conversation(conversation_id, user_id, project_id, user_query, result)
+            
+            # Add conversation_id to result
+            result['conversation_id'] = conversation_id
             
             return result
             

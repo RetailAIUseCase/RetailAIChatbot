@@ -10,6 +10,13 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Separator } from "@/components/ui/separator"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
 import { 
   Send, 
   Bot, 
@@ -34,6 +41,8 @@ import {
   Activity,        // New: for retrieval stats
   Clock,
   Pause,
+  Plus,
+  MessageSquare
 } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 
@@ -97,14 +106,24 @@ interface Project {
   }
 }
 
-interface ChatInterfaceProps {
-  selectedProject: Project | null
+interface Conversation {
+  id: string
+  title: string
+  project_id: string
+  created_at: string
+  updated_at: string
+  message_count: number
 }
 
 // Add props for processing state
 interface ChatInterfaceProps {
-  selectedProject: Project | null;
-  isEmbeddingProcessing?: boolean; // Add this prop
+  selectedProject: Project | null
+  isEmbeddingProcessing?: boolean
+  conversations: Conversation[]
+  currentConversationId: string | null
+  onConversationChange: (conversationId: string | null) => void
+  onNewConversation: () => void
+  
 }
 // **NEW: Context Sources Display Component**
 // const ContextSourcesDisplay = ({ 
@@ -734,9 +753,87 @@ const MessageBubble = ({
 //     </div>
 //   )
 // }
+// Add this component above your ChatInterface component
+// const ConversationSelector = ({ 
+//   conversations, 
+//   currentConversationId, 
+//   onConversationChange, 
+//   onNewConversation 
+// }: {
+//   conversations: Conversation[]
+//   currentConversationId: string | null
+//   onConversationChange: (conversationId: string | null) => void
+//   onNewConversation: () => void
+// }) => {
+//   // Don't show if no conversations exist and no current conversation
+//   if (conversations.length === 0 && !currentConversationId) {
+//     return null
+//   }
+
+//   return (
+//     <div className="px-3 py-2 bg-background/95 backdrop-blur border-b">
+//       <div className="max-w-4xl mx-auto">
+//         <div className="flex items-center gap-2">
+//           <DropdownMenu>
+//             <DropdownMenuTrigger asChild>
+//               <Button variant="outline" size="sm" className="flex-1 justify-start">
+//                 <MessageSquare className="h-4 w-4 mr-2" />
+//                 {currentConversationId ? 
+//                   conversations.find(c => c.id === currentConversationId)?.title?.slice(0, 40) + "..." || "Current Chat"
+//                   : "New Chat"
+//                 }
+//                 <ChevronDown className="h-4 w-4 ml-auto" />
+//               </Button>
+//             </DropdownMenuTrigger>
+//             <DropdownMenuContent className="w-80" align="start">
+//               <DropdownMenuItem onClick={onNewConversation}>
+//                 <Plus className="h-4 w-4 mr-2" />
+//                 New Chat
+//               </DropdownMenuItem>
+//               {conversations.length > 0 && (
+//                 <>
+//                   <DropdownMenuSeparator />
+//                   <div className="max-h-60 overflow-y-auto">
+//                     {conversations.map(conv => (
+//                       <DropdownMenuItem 
+//                         key={conv.id}
+//                         onClick={() => onConversationChange(conv.id)}
+//                         className={currentConversationId === conv.id ? "bg-accent" : ""}
+//                       >
+//                         <div className="flex flex-col items-start w-full">
+//                           <span className="font-medium truncate w-full">
+//                             {conv.title || "Untitled Chat"}
+//                           </span>
+//                           <span className="text-xs text-muted-foreground">
+//                             {new Date(conv.updated_at).toLocaleDateString()} • {conv.message_count} messages
+//                           </span>
+//                         </div>
+//                       </DropdownMenuItem>
+//                     ))}
+//                   </div>
+//                 </>
+//               )}
+//             </DropdownMenuContent>
+//           </DropdownMenu>
+          
+//           <Button variant="outline" size="sm" onClick={onNewConversation}>
+//             <Plus className="h-4 w-4" />
+//           </Button>
+//         </div>
+//       </div>
+//     </div>
+//   )
+// }
+
 
 // **ENHANCED: Main ChatInterface Component with updated API call**
-export function ChatInterface({ selectedProject, isEmbeddingProcessing = false }: ChatInterfaceProps) {
+export function ChatInterface({ 
+  selectedProject, 
+  isEmbeddingProcessing = false, 
+  conversations,
+  currentConversationId,
+  onConversationChange,
+  onNewConversation}: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [message, setMessage] = useState("")
   const [isTyping, setIsTyping] = useState(false)
@@ -750,21 +847,86 @@ export function ChatInterface({ selectedProject, isEmbeddingProcessing = false }
 
   // Initialize welcome message
   useEffect(() => {
-    if (selectedProject) {
-      setMessages([
-        {
-          id: "welcome",
-          content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". I can help you query your database using schema information, business rules, and documentation. What would you like to know?`,
-          sender: "ai",
-          timestamp: new Date(),
-          intent: isEmbeddingProcessing ?"processing_status":"welcome"
-        },
-      ])
-      setError(null)
+    if (currentConversationId) {
+      loadConversationMessages(currentConversationId)
     } else {
-      setMessages([])
+      // Clear messages for new chat or show welcome message
+      if (selectedProject?.id) {
+        setMessages([
+          {
+            id: "welcome",
+            content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". I can help you query your database using schema information, business rules, and documentation. What would you like to know?`,
+            sender: "ai",
+            timestamp: new Date(),
+            intent: isEmbeddingProcessing ? "processing_status" : "welcome"
+          },
+        ])
+      } else {
+        setMessages([])
+      }
     }
-  }, [selectedProject, isEmbeddingProcessing])
+  }, [currentConversationId, selectedProject?.id, isEmbeddingProcessing])
+
+  // ADD: Function to load conversation messages
+  const loadConversationMessages = async (conversationId: string) => {
+    try {
+      const token = localStorage.getItem('access_token')
+      const response = await fetch(`${API_BASE_URL}/chat/conversation/${conversationId}/messages`, {
+        headers: { 'Authorization': `Bearer ${token}`}
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        if (!data.messages || data.messages.length === 0) {
+        // Show welcome message for empty conversations
+        if (selectedProject?.id) {
+          setMessages([
+            {
+              id: "welcome",
+              content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". I can help you query your database using schema information, business rules, and documentation. What would you like to know?`,
+              sender: "ai",
+              timestamp: new Date(),
+              intent: isEmbeddingProcessing ? "processing_status" : "welcome"
+            },
+          ])
+        } else {
+          setMessages([])
+        }
+        return // Exit early for empty conversations
+      }
+
+        const formattedMessages = data.messages.map((msg: any) => {
+          let queryResult = msg.query_result
+          if (typeof queryResult === 'string') {
+            try {
+              queryResult = JSON.parse(queryResult)
+            } catch (e) {
+              console.warn('Failed to parse query_result:', e)
+              queryResult = null
+            }
+          }
+          return{
+          id: msg.id,
+          content: msg.content,
+          sender: msg.role === 'user' ? 'user' : 'ai',
+          timestamp: new Date(msg.created_at),
+          sqlQuery: msg.sql_query,
+          queryResult: queryResult,
+          intent: msg.intent,
+          tables_used: msg.tables_used,
+          business_rules_applied: msg.business_rules_applied,
+          reference_context: msg.reference_context,
+          sample_data: queryResult?.sample_data || queryResult?.data || msg.sample_data,
+          total_rows: queryResult?.rows_count || queryResult?.row_count || msg.rows_count,
+          retrieval_stats: msg.retrieval_stats,
+          context_sources: msg.context_sources
+        }})
+        setMessages(formattedMessages)
+      }
+    } catch (error) {
+      console.error('Error loading conversation messages:', error)
+    }
+  }
 
   // useEffect(() => {
   //   if (isEmbeddingProcessing && messages.length > 0 && selectedProject) {
@@ -840,6 +1002,7 @@ export function ChatInterface({ selectedProject, isEmbeddingProcessing = false }
         body: JSON.stringify({
           message: userMessage.content,
           project_id: selectedProject.id,
+          conversation_id: currentConversationId,
         }),
       })
 
@@ -942,6 +1105,17 @@ export function ChatInterface({ selectedProject, isEmbeddingProcessing = false }
     <div className="flex flex-col h-full bg-background">
       {/* **NEW: Embedding Processing Banner** */}
       {/* {isEmbeddingProcessing && <EmbeddingProcessingBanner />} */}
+
+      {/* ADD: Conversation Selector */}
+      {/* {selectedProject && (
+        <ConversationSelector 
+          conversations={conversations}
+          currentConversationId={currentConversationId}
+          onConversationChange={onConversationChange}
+          onNewConversation={onNewConversation}
+        />
+      )} */}
+
       {/* Error Banner */}
       {error && (
         <Alert variant="destructive" className="mx-3 mt-3 flex-shrink-0">
