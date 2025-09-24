@@ -896,7 +896,7 @@ class SQLRAGService:
     
             Analyze this user query and classify it into ONE of these intents:
                 1. po_generation - User wants to generate/create purchase orders
-                - Keywords: "generate PO", "create purchase order", "make PO", "po for", "order materials"
+                - Keywords: "generate PO", "create purchase order", "make PO", "po for", "order materials", "procurement workflow"
                 - Examples: "generate PO for today", "create purchase order for tomorrow", "make PO for next week"
 
                 2. sql_query - User wants data analysis or database queries or business insights

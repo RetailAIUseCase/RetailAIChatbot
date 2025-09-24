@@ -5,10 +5,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings(BaseSettings):
-    # # Database
-    # SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-    # SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
-    # DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     
     # Database configuration
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
@@ -42,18 +38,13 @@ class Settings(BaseSettings):
 
     # LLM Configuration
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     
     # File Storage
     UPLOAD_DIR: str = "uploads"
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
-    
-    # Vector Database
-    PINECONE_API_KEY: Optional[str] = os.getenv("PINECONE_API_KEY")
-    PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "rag-documents")
 
     # Purchase Order Settings
-    PO_APPROVAL_THRESHOLD: float = float(os.getenv("PO_APPROVAL_THRESHOLD", "1000.0"))
+    PO_APPROVAL_THRESHOLD: float = float(os.getenv("PO_APPROVAL_THRESHOLD", "50000.0"))
 
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.example.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
@@ -61,7 +52,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "your-email-password")
     # SendGrid Configuration
     SENDGRID_API_KEY: str = os.getenv("SENDGRID_API_KEY", "")
-    # SENDGRID_FROM_EMAIL: str = os.getenv("SENDGRID_FROM_EMAIL", "noreply@yourcompany.com")
+    SENDGRID_FROM_EMAIL: str = os.getenv("SENDGRID_FROM_EMAIL", "noreply@yourcompany.com")
 
     # Template IDs (you'll get these from SendGrid dashboard)
     SENDGRID_PO_APPROVAL_TEMPLATE_ID: str = os.getenv("SENDGRID_PO_APPROVAL_TEMPLATE_ID", "")
