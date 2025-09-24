@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     # For production deployment (Railway/Vercel)
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     PORT: int = int(os.getenv("PORT", "8000"))
+    API_BASE_URL: str = os.getenv("API_BASE_URL", "http://localhost:8000")
 
     # LLM Configuration
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
@@ -50,7 +51,30 @@ class Settings(BaseSettings):
     # Vector Database
     PINECONE_API_KEY: Optional[str] = os.getenv("PINECONE_API_KEY")
     PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "rag-documents")
-    
+
+    # Purchase Order Settings
+    PO_APPROVAL_THRESHOLD: float = float(os.getenv("PO_APPROVAL_THRESHOLD", "1000.0"))
+
+    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.example.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "your-email@example.com")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "your-email-password")
+    # SendGrid Configuration
+    SENDGRID_API_KEY: str = os.getenv("SENDGRID_API_KEY", "")
+    # SENDGRID_FROM_EMAIL: str = os.getenv("SENDGRID_FROM_EMAIL", "noreply@yourcompany.com")
+
+    # Template IDs (you'll get these from SendGrid dashboard)
+    SENDGRID_PO_APPROVAL_TEMPLATE_ID: str = os.getenv("SENDGRID_PO_APPROVAL_TEMPLATE_ID", "")
+    SENDGRID_PO_VENDOR_TEMPLATE_ID: str = os.getenv("SENDGRID_PO_VENDOR_TEMPLATE_ID", "")
+    SENDGRID_PO_STATUS_TEMPLATE_ID: str = os.getenv("SENDGRID_PO_STATUS_TEMPLATE_ID", "")
+
+    COMPANY_NAME: str = os.getenv("COMPANY_NAME", "Your Company Name")
+    COMPANY_ADDRESS: str = os.getenv("COMPANY_ADDRESS", "Your Company Address")
+    COMPANY_PHONE: str = os.getenv("COMPANY_PHONE", "Your Company Phone")
+    COMPANY_EMAIL: str = os.getenv("COMPANY_EMAIL", "Your Company Email")
+    COMPANY_WEBSITE: str = os.getenv("COMPANY_WEBSITE", "Your Company Website")
+    COMPANY_CONTACT_NAME: str = os.getenv("COMPANY_CONTACT_NAME", "Your Company Contact Name")
+
     # CORS
     ALLOWED_ORIGINS: list = [
         "http://localhost:3000",

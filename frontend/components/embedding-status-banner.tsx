@@ -52,17 +52,19 @@ export function EmbeddingStatusBanner({ projectId, onStatusChange }: EmbeddingSt
 
   useEffect(() => {
     if (!projectId) return;
-
     // Initial fetch
     fetchStatus();
+  }, [projectId]);
 
-    // Poll every 3 seconds when processing
+  useEffect(() => {
+    if (!projectId || !isProcessing) return;
+
     const interval = setInterval(() => {
       fetchStatus();
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [projectId]);
+  }, [projectId, isProcessing]);
 
   if (error || !status || status.total === 0) return null;
 

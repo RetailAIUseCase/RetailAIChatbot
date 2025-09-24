@@ -27,7 +27,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { DocumentUploadDialog } from "@/components/document-upload-dialog"
 import { ChatInterface } from "@/components/chat-interface"
-import { DownloadManagement } from "@/components/download-management"
+import { POSidebar } from "@/components/po-sidebar"
 // Add to your imports in the dashboard
 import { EmbeddingStatusBanner } from "@/components/embedding-status-banner"
 import {
@@ -673,10 +673,12 @@ export default function DashboardPage() {
       setEmbeddingStatus(null)
       return
     }
-
     // Initial check
     checkEmbeddingStatus(selectedProject.id)
+    }, [selectedProject?.id]);
 
+  useEffect(() => {
+    if (!selectedProject || !isEmbeddingProcessing) return;
     // Set up polling interval
     const interval = setInterval(() => {
       checkEmbeddingStatus(selectedProject.id)
@@ -1105,7 +1107,7 @@ export default function DashboardPage() {
             onNewConversation={handleNewConversation} />
         </main>
 
-        {/* Right Panel - Download Management */}
+        {/* Right Panel - Purchase Order Management */}
         <aside
           className={`${
             rightPanelOpen ? "translate-x-0" : "translate-x-full lg:translate-x-full"
@@ -1123,7 +1125,7 @@ export default function DashboardPage() {
               <ChevronRight className="h-3 w-3" />
             </Button>
           </div>
-          <DownloadManagement selectedProject={selectedProject} projects={projects} />
+          <POSidebar selectedProject={selectedProject}/>
         </aside>
         
         {/* Toggle button for collapsed left sidebar */}

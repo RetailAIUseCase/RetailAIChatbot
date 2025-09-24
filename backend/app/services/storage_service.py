@@ -20,7 +20,8 @@ class StorageService:
         self.buckets = {
             "metadata": "metadata-documents",
             "businesslogic": "business-logic-documents",
-            "references": "reference-documents"
+            "references": "reference-documents",
+            "purchase-orders": "purchase-orders" 
         }
         
         # Supabase configuration
@@ -232,6 +233,155 @@ class StorageService:
         except Exception as e:
             logger.error(f"File info error: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to get file info: {str(e)}")
+        
+    async def upload_po_pdf(self, pdf_content: bytes, po_number: str, user_id: int, project_id: str, order_date: str) -> Dict[str, Any]:
+        """Upload PO PDF to Supabase Storage"""
+        try:
+            bucket_name = self.buckets["purchase-orders"]
+
+            # await self.create_buckets_if_not_exist()
+            
+            # Create file path with date: user_id/project_id/order_date/po_number.pdf
+            # date_folder = order_date.replace('-', '')
+            filename = f"{po_number}.pdf"
+            file_path = f"{user_id}/{project_id}/{order_date}/{filename}"
+            
+            # Store file using existing method
+            await self._store_file_in_bucket(bucket_name, file_path, pdf_content, "application/pdf")
+            
+            return {
+                "file_path": file_path,
+                "bucket_name": bucket_name,
+                "filename": filename,
+                "file_size": len(pdf_content),
+                "po_number": po_number,
+                "unique_filename": True,
+                "public_url": f"{self.supabase_url}/storage/v1/object/public/{bucket_name}/{file_path}"
+            }
+            
+        except Exception as e:
+            logger.error(f"PO PDF upload error: {e}")
+            raise HTTPException(status_code=500, detail=f"PO PDF upload failed: {str(e)}")
+    
+    async def download_po_pdf(self, file_path: str) -> bytes:
+        """Download PO PDF from storage"""
+        return await self.download_file(self.buckets["purchase-orders"], file_path)
+    
+    async def file_exists(self, bucket_name: str, file_path: str) -> bool:
+        """Check if file exists in Supabase Storage bucket"""
+        try:
+            async with httpx.AsyncClient() as client:
+                check_url = f"{self.supabase_url}/storage/v1/object/{bucket_name}/{file_path}"
+                headers = {"Authorization": f"Bearer {self.supabase_service_role_key}"}
+                response = await client.head(check_url, headers=headers)
+                return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Error checking file existence: {e}")
+            return False
+
+    async def generate_po_download_url(self, file_path: str, expiry_minutes: int = 60) -> dict:
+        """Generate download URL for PO PDF - COMPLETE VERSION"""
+        try:
+            bucket_name = self.buckets["purchase-orders"]
+            
+            # Check if file exists first
+            file_exists = await self.file_exists(bucket_name, file_path)
+            if not file_exists:
+                return {
+                    "success": False,
+                    "error": "File not found",
+                    "signed_url": None
+                }
+            
+            # Try signed URL first
+            try:
+                async with httpx.AsyncClient() as client:
+                    signed_url_endpoint = f"{self.supabase_url}/storage/v1/object/sign/{bucket_name}/{file_path}"
+                    
+                    headers = {
+                        "Authorization": f"Bearer {self.supabase_service_role_key}",
+                        "Content-Type": "application/json"
+                    }
+                    
+                    payload = {"expiresIn": expiry_minutes * 60}
+                    
+                    response = await client.post(
+                        signed_url_endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=10.0
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        if 'signedURL' in result:
+                            return {
+                                "success": True,
+                                "signed_url": result['signedURL'],
+                                "expires_in_minutes": expiry_minutes
+                            }
+                    
+            except Exception as signed_error:
+                logger.warning(f"Signed URL error: {signed_error}")
+            
+            # Fallback to direct URL
+            direct_url = f"{self.supabase_url}/storage/v1/object/{bucket_name}/{file_path}"
+            
+            return {
+                "success": True,
+                "signed_url": direct_url,
+                "method": "direct",
+                "warning": "Using direct URL - signed URL generation failed"
+            }
+                
+        except Exception as e:
+            logger.error(f"Error generating download URL: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "signed_url": None
+            }
+
+    async def delete_po_pdf(self, file_path: str) -> bool:
+        """Delete PO PDF from storage - used for cleanup when PO generation fails"""
+        try:
+            bucket_name = self.buckets["purchase-orders"]
+            result = await self.delete_file(bucket_name, file_path)
+            
+            if result:
+                logger.info(f"✅ Cleanup: Deleted PDF from storage: {file_path}")
+            else:
+                logger.warning(f"⚠️ Cleanup: Could not delete PDF from storage: {file_path}")
+                
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Cleanup error deleting PDF {file_path}: {e}")
+            return False
+
+    async def cleanup_failed_po_pdf(self, pdf_result: Dict, po_number: str) -> bool:
+        """Cleanup PDF when PO generation fails after PDF was created"""
+        try:
+            if not pdf_result or not pdf_result.get("success") or not pdf_result.get("pdf_path"):
+                # No PDF was created successfully, nothing to cleanup
+                return True
+                
+            pdf_path = pdf_result["pdf_path"]
+            logger.info(f"🧹 Starting cleanup for failed PO {po_number}, PDF path: {pdf_path}")
+            
+            # Delete the PDF file
+            cleanup_success = await self.delete_po_pdf(pdf_path)
+            
+            if cleanup_success:
+                logger.info(f"✅ Successfully cleaned up PDF for failed PO {po_number}")
+            else:
+                logger.error(f"❌ Failed to cleanup PDF for failed PO {po_number} at path: {pdf_path}")
+                
+            return cleanup_success
+            
+        except Exception as e:
+            logger.error(f"❌ Exception during PDF cleanup for PO {po_number}: {e}")
+            return False
 
 # Global instance
 storage_service = StorageService()

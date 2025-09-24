@@ -37,7 +37,10 @@ class SQLChatResponse(BaseModel):
     retrieval_stats: Optional[Dict[str, int]] = None   # New field for retrieval statistics
     context_sources: Optional[List[str]] = None       # New field for context source types
 
-@router.post("/sql", response_model=SQLChatResponse)
+    po_workflow: Optional[Dict[str, Any]] = None  # PO workflow details
+    po_suggestion: Optional[Dict[str, Any]] = None  # PO suggestions from SQL results
+
+@router.post("/query", response_model=SQLChatResponse)
 async def chat_with_database(
     chat_request: SQLChatRequest,
     credentials: HTTPAuthorizationCredentials = Depends(security)
@@ -107,7 +110,9 @@ async def chat_with_database(
             sample_data=response.get("sample_data",[]),
             total_rows=response.get("total_rows",0),
             # retrieval_stats=retrieval_stats,
-            # context_sources=context_sources
+            # context_sources=context_sources,
+            po_workflow=response.get("po_workflow"),     
+            po_suggestion=response.get("po_suggestion")
         )
         
     except HTTPException:
@@ -307,6 +312,8 @@ async def health_check():
             "status": "healthy",
             "embedding_service": "operational",
             "embedding_dimensions": len(test_embedding),
+            "po_generation_enabled": True,
+            "date_parser_enabled": hasattr(rag_sql_service, 'date_parser'),
             "conversation_memory_active": len(rag_sql_service.conversation_memory) > 0
         }
     except Exception as e:
@@ -315,3 +322,42 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e)
         }
+
+# Endpoint for testing PO functionality
+@router.post("/test-po")
+async def test_po_generation(
+    chat_request: SQLChatRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Test PO generation functionality"""
+    try:
+        user = await get_current_user(credentials.credentials)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid authentication")
+        
+        # Test PO intent detection
+        intent = await rag_sql_service.detect_query_intent(chat_request.message, [])
+        
+        if intent == "po_generation":
+            # Test date extraction
+            extracted_date = await rag_sql_service.extract_date_from_query_llm(chat_request.message)
+            parsed_date = await rag_sql_service.date_parser.parse_date_llm(extracted_date)
+            
+            return {
+                "message": chat_request.message,
+                "detected_intent": intent,
+                "extracted_date": extracted_date,
+                "parsed_date": parsed_date,
+                "po_generation_ready": True
+            }
+        else:
+            return {
+                "message": chat_request.message,
+                "detected_intent": intent,
+                "po_generation_ready": False,
+                "reason": "Not a PO generation query"
+            }
+            
+    except Exception as e:
+        logger.error(f"PO test error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

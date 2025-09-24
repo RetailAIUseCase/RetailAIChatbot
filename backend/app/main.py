@@ -10,6 +10,8 @@ from app.config.settings import settings
 from app.projects.routes import router as projects_router
 from app.chat.sql_routes import router as sql_chat_router
 from app.documents.routes import router as uploaded_document_router
+from app.websocket.routes import router as websocket_router
+from app.purchase_order.routes import router as po_router
 import logging
 
 # Configure logging
@@ -44,11 +46,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.FRONTEND_URL,  # Add your Vercel deployment URL here for production  # "https://your-frontend.vercel.app"
-        "http://localhost:3000",  # Local development
-        "http://127.0.0.1:3000",  # Alternative localhost format
-    ],
+    allow_origins=[origin for origin in settings.ALLOWED_ORIGINS],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
@@ -59,6 +57,8 @@ app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(sql_chat_router)
 app.include_router(uploaded_document_router)
+app.include_router(websocket_router)
+app.include_router(po_router)
 
 @app.get("/")
 async def root():

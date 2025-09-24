@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Purchase Order Status Update</title>
+    <style>
+        /* Reset styles for Outlook */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            margin: 0 !important; 
+            padding: 0 !important; 
+            font-family: Arial, sans-serif !important; 
+            background-color: #f5f5f5 !important; 
+            color: #333333 !important; 
+            line-height: 1.6 !important;
+            -webkit-text-size-adjust: 100% !important;
+            -ms-text-size-adjust: 100% !important;
+        }
+        
+        /* Force Outlook to respect table width */
+        table { border-collapse: collapse !important; }
+        .container { 
+            width: 100% !important; 
+            max-width: 600px !important; 
+            margin: 0 auto !important; 
+        }
+        
+        .header-icon { 
+            width: 50px !important; 
+            height: 50px !important; 
+            border-radius: 50% !important; 
+            font-size: 24px !important; 
+            line-height: 50px !important; 
+            text-align: center !important;
+            background-color: rgba(255,255,255,0.2) !important;
+            display: table-cell !important;
+            vertical-align: middle !important;
+        }
+        
+        .po-number { 
+            font-family: 'Courier New', monospace !important; 
+            background-color: #e8e8e8 !important; 
+            padding: 4px 8px !important; 
+            border-radius: 3px !important;
+            font-weight: bold !important;
+        }
+        
+        .status-badge { 
+            color: #ffffff !important; 
+            padding: 6px 16px !important; 
+            border-radius: 12px !important; 
+            font-size: 12px !important; 
+            font-weight: bold !important; 
+            text-transform: uppercase !important;
+            display: inline-block !important;
+        }
+        
+        /* Status-specific styles */
+        .status-approved .header-bg { background-color: #28A745 !important; }
+        .status-rejected .header-bg { background-color: #DC3545 !important; }
+        .status-sent_to_vendor .header-bg { background-color: #FF6600 !important; }
+        
+        .status-approved .status-badge { background-color: #28A745 !important; }
+        .status-rejected .status-badge { background-color: #DC3545 !important; }
+        .status-sent_to_vendor .status-badge { background-color: #FF6600 !important; }
+        
+        .status-approved .status-row td { border-bottom: 2px solid #28A745 !important; }
+        .status-rejected .status-row td { border-bottom: 2px solid #DC3545 !important; }
+        .status-sent_to_vendor .status-row td { border-bottom: 2px solid #FF6600 !important; }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+    
+    <!-- Wrapper table for Outlook -->
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                
+                <!-- Main container with status class -->
+                <table class="container status-{{ status }}" role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #e0e0e0;">
+                    
+                    <!-- Header with dynamic background -->
+                    <tr>
+                        <td class="header-bg" style="padding: 25px; text-align: center; color: #ffffff;">
+                            <!-- Header icon -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td align="center">
+                                        <div class="header-icon" style="background-color: rgba(255,255,255,0.2); width: 50px; height: 50px; border-radius: 50%; margin: 0 auto 10px; display: table-cell; vertical-align: middle; text-align: center; font-size: 24px; line-height: 50px;">
+                                            {{ status_icon }}
+                                        </div>
+                                        <h1 style="font-size: 22px; font-weight: normal; margin: 10px 0 5px 0; color: #ffffff;">Purchase Order Status Update</h1>
+                                        <p style="margin: 0; color: #ffffff;">{{ status_message }}</p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content area -->
+                    <tr>
+                        <td style="padding: 30px;">
+                            
+                            <!-- Status Information -->
+                            <h3 style="color: #333333; font-size: 18px; margin-bottom: 15px; border-bottom: 2px solid #FF6600; padding-bottom: 5px; display: inline-block;">Status Information</h3>
+                            
+                            <!-- Details table -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="width: 100%; margin: 20px 0; background-color: #fafafa;">
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; border-bottom: 1px solid #e0e0e0; font-weight: 600; color: #333333; width: 30%;">Purchase Order Number</td>
+                                    <td style="padding: 12px; color: #555555; border-bottom: 1px solid #e0e0e0;">
+                                        <span class="po-number" style="font-family: 'Courier New', monospace; background-color: #e8e8e8; padding: 4px 8px; border-radius: 3px; font-weight: bold;">{{ po_number }}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; border-bottom: 1px solid #e0e0e0; font-weight: 600; color: #333333;">Vendor</td>
+                                    <td style="padding: 12px; color: #555555; border-bottom: 1px solid #e0e0e0;"><strong>{{ vendor_name }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; border-bottom: 1px solid #e0e0e0; font-weight: 600; color: #333333;">Order Value</td>
+                                    <td style="padding: 12px; color: #555555; border-bottom: 1px solid #e0e0e0;"><strong>₹{{ total_amount }}</strong></td>
+                                </tr>
+                                <!-- Status row with class for border color -->
+                                <tr class="status-row">
+                                    <td style="padding: 12px; background-color: #f0f0f0; font-weight: 600; color: #333333;">Current Status</td>
+                                    <td style="padding: 12px; color: #555555;">
+                                        <span class="status-badge" style="color: #ffffff; padding: 6px 16px; border-radius: 12px; font-size: 12px; font-weight: bold; text-transform: uppercase; display: inline-block;">{{ status_text }}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; font-weight: 600; color: #333333;">Status Updated</td>
+                                    <td style="padding: 12px; color: #555555;">{{ current_date }}</td>
+                                </tr>
+                            </table>
+                            
+                            {% if has_comment %}
+                            <!-- Comment Section -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 20px 0;">
+                                <tr>
+                                    <td style="background-color: #fff3e0; border-left: 4px solid #FF6600; padding: 20px; border-radius: 0 4px 4px 0;">
+                                        <h4 style="color: #e65100; margin: 0 0 10px 0;">💬 Additional Comments</h4>
+                                        <p style="color: #bf360c; background-color: #ffffff; padding: 15px; border-radius: 4px; margin: 0; font-style: italic;">"{{ comment }}"</p>
+                                    </td>
+                                </tr>
+                            </table>
+                            {% endif %}
+                            
+                            <!-- Next Steps -->
+                            <h4 style="color: #333333; margin: 25px 0 10px 0;">What happens next?</h4>
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td style="color: #555555; padding-left: 20px; line-height: 1.8;">
+                                        {% if status == "approved" %}
+                                        • Your purchase order has been sent to the vendor<br>
+                                        • The vendor will confirm receipt and processing timeline<br>
+                                        • You will be notified of any delivery updates<br>
+                                        • Please track the order status in your dashboard
+                                        {% elif status == "rejected" %}
+                                        • This purchase order will not be processed<br>
+                                        • Please review the rejection reason above<br>
+                                        • You may resubmit a new request with corrections<br>
+                                        • Contact procurement team for clarification if needed
+                                        {% else %}
+                                        • No further action required from your side<br>
+                                        • Monitor your dashboard for additional updates<br>
+                                        • Contact support if you have any questions
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Attachment Info -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 20px 0;">
+                                <tr>
+                                    <td style="background-color: #e8f5e8; border: 1px solid #c3e6c3; padding: 20px; text-align: center; border-radius: 4px;">
+                                        <h4 style="color: #2e7d2e; margin: 0 0 10px 0;">📎 Purchase Order Document</h4>
+                                        <p style="color: #1b5e1f; margin: 0;">
+                                            The complete purchase order document is attached to this email for your records. 
+                                            You can also access all your purchase orders through the procurement dashboard.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #333333; padding: 20px; text-align: center;">
+                            <p style="color: #cccccc; font-size: 13px; margin: 0 0 5px 0;">
+                                <strong style="color: #FF6600;">{{ company_name }}</strong> - Procurement Management System
+                            </p>
+                            <p style="color: #cccccc; font-size: 13px; margin: 0 0 5px 0;">
+                                Automated notification | {{ timestamp }}
+                            </p>
+                            <p style="color: #cccccc; font-size: 13px; margin: 0;">
+                                For support, contact: {{ help_email }}
+                            </p>
+                        </td>
+                    </tr>
+                    
+                </table>
+                
+            </td>
+        </tr>
+    </table>
+
+</body>
+</html>

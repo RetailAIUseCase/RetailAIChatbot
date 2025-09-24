@@ -7,9 +7,14 @@ import re
 from typing import Dict, List, Any, Optional, Tuple
 import uuid
 from openai import AsyncOpenAI
+from datetime import datetime
 from app.database.connection import db
 from app.config.settings import settings
+from app.utils.date_parser import parse_user_date_safe
+from app.services.po_workflow_service import po_workflow_service
 import logging
+
+from app.utils.date_parser_llm import LLMDateParser
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,7 @@ class SQLRAGService:
         self.LLM_model = settings.LLM_MODEL
         self.NLP_LLM_model = settings.NLP_LLM_MODEL
         self.embedding_dimensions = settings.EMBEDDING_DIMENSIONS
+        self.date_parser = LLMDateParser(self.client, self.NLP_LLM_model)
 
     async def embed_query(self, query: str) -> List[float]:
         """Create embedding for user query"""
@@ -304,29 +310,29 @@ class SQLRAGService:
                 # Clean table summary (remove assumptions/notes)
                 for table_info in tables_info[table_name]['table']:
                     # clean_content = self._clean_table_content(table_info['content'])
-                    db_context += f"**Schema** (relevance: {table_info['similarity']:.2f}):\n{table_info['content']}\n\n"
+                    db_context += f"Schema (relevance: {table_info['similarity']:.2f}):\n{table_info['content']}\n\n"
                 
                 # Clean column information
                 for col_info in tables_info[table_name]['column']:
                     # clean_content = self._clean_column_content(col_info['content'])
-                    db_context += f"**Columns** (relevance: {col_info['similarity']:.2f}):\n{col_info['content']}\n\n"
+                    db_context += f"Columns (relevance: {col_info['similarity']:.2f}):\n{col_info['content']}\n\n"
                 
                 # Clean relationship information
                 for rel_info in tables_info[table_name]['relationship']:
                     # clean_content = self._clean_relationship_content(rel_info['content'])
-                    db_context += f"**Relationships** (relevance: {rel_info['similarity']:.2f}):\n{rel_info['content']}\n\n"
+                    db_context += f"Relationships (relevance: {rel_info['similarity']:.2f}):\n{rel_info['content']}\n\n"
 
         # Business logic context
         if retrieval.get('business_logic'):
             business_context += "\nBUSINESS RULES & LOGIC:\n"
             for rule in retrieval['business_logic'][:3]:  # Top 3 rules
-                business_context += f"\n**Rule {rule['rule_number']}** (similarity: {rule['similarity']:.2f}):\n{rule['content']}\n"
+                business_context += f"\nRule {rule['rule_number']} (similarity: {rule['similarity']:.2f}):\n{rule['content']}\n"
 
         # Reference context
         if retrieval.get('references'):
             reference_context += "\nREFERENCE DOCUMENTATION:\n"
             for ref in retrieval['references'][:2]:  # Top 2 references
-                reference_context += f"\n**Reference** (similarity: {ref['similarity']:.2f}):\n{ref['content'][:300]}...\n"
+                reference_context += f"\nReference (similarity: {ref['similarity']:.2f}):\n{ref['content'][:300]}...\n"
         
         return db_context, business_context, reference_context
 
@@ -334,7 +340,7 @@ class SQLRAGService:
         """Build conversation context string"""
         context = ""
         if conversation_history:
-            context = "**Previous Conversation Context:**\n"
+            context = "Previous Conversation Context:\n"
             for msg in conversation_history:  # Last 6 messages
                 if msg['role'] == 'user':
                     context += f"User: {msg['content']}\n"
@@ -354,6 +360,7 @@ class SQLRAGService:
         user_query: str, 
         relevant_data: Dict[str, Any],
         conversation_history: List[Dict],
+        max_retries: int = 2
     ) -> Dict[str, Any]:
         """Generate SQL query and natural language response"""
         
@@ -368,119 +375,169 @@ class SQLRAGService:
             
         # Build enhanced context from all sources
         db_context, business_context, reference_context = self._build_enhanced_context(relevant_data)
-        # print("DB CONTEXT", db_context)
-        # print("BUSINESS CONTEXT", business_context)
 
         # Enhanced conversation context - include SQL queries and results
         conversation_context = self._build_conversation_context(conversation_history)
         
-            
-        system_prompt = f"""You are an expert SQL analyst and data consultant. Generate ONLY valid PostgreSQL queries using the provided schema information.
+        # Track retry attempts and errors
+        sql_errors = []
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Build error context from previous attempts
+                error_context = ""
+                if sql_errors:
+                    error_context = f"""
+                                        PREVIOUS SQL ERRORS TO LEARN FROM:
+                                        {chr(10).join([f"Attempt {i+1}: Error: {err['error']}" for i, err in enumerate(sql_errors)])}
 
-            1. **Understand user intent** from their natural language query
-            2. **Generate SQL queries** when appropriate using the provided database schema
-            3. **Provide comprehensive explanations** of your analysis
+                                        IMPORTANT: Fix these issues in your new SQL query:
+                                        - Check column names exist in schema
+                                        - Verify table names are correct
+                                        - Fix JOIN syntax if needed
+                                        - Handle DISTINCT/ORDER BY rules properly
+                                        - Ensure no duplicate rows are created
+                                        """
+                system_prompt = f"""You are an expert SQL analyst and data consultant. Generate ONLY valid PostgreSQL queries using the provided schema information.
+                    
+                    {error_context}
 
-            **CRITICAL RULES:**
-            1. **USE ONLY EXACT COLUMN NAMES** from the schema - never assume or invent column names
-            2. **USE ONLY EXACT TABLE NAMES** from the schema
-            3. **FOLLOW FOREIGN KEY RELATIONSHIPS** exactly as specified in the schema
-            4. **GENERATE CLEAN SQL ONLY** - no assumptions, notes, or comments in the SQL query
-            5. **PREVENT DUPLICATE ROWS** - always consider using DISTINCT when joining tables
-            6. **VALIDATE TABLE JOINS** using the relationship information provided
-            7. **USE PROPER AGGREGATION** - when using subqueries, ensure they don't create duplicates
+                    1. Understand user intent from their natural language query
+                    2. Generate SQL queries when appropriate using the provided database schema
+                    3. Provide comprehensive explanations of your analysis
 
-            **ANTI-DUPLICATION GUIDELINES:**
-            - Use DISTINCT when selecting from joined tables that might have one-to-many relationships
-            - In subqueries with JSON aggregation, ensure proper grouping to prevent duplicates
-            - Consider using EXISTS instead of JOIN when checking for relationships
-            - Use proper WHERE clauses to constrain results
-            - When using MIN/MAX in subqueries, be aware that multiple records might have the same min/max value
+                    CRITICAL RULES:
+                    1. USE ONLY EXACT COLUMN NAMES from the schema - never assume or invent column names
+                    2. USE ONLY EXACT TABLE NAMES from the schema
+                    3. FOLLOW FOREIGN KEY RELATIONSHIPS exactly as specified in the schema
+                    4. GENERATE CLEAN SQL ONLY - no assumptions, notes, or comments in the SQL query
+                    5. PREVENT DUPLICATE ROWS - always consider using DISTINCT when joining tables
+                    6. VALIDATE TABLE JOINS using the relationship information provided
+                    7. USE PROPER AGGREGATION - when using subqueries, ensure they don't create duplicates
 
-            **Available Database Schemas:**
-            {db_context}
+                    ANTI-DUPLICATION GUIDELINES:
+                    - Use DISTINCT when selecting from joined tables that might have one-to-many relationships
+                    - In subqueries with JSON aggregation, ensure proper grouping to prevent duplicates
+                    - Consider using EXISTS instead of JOIN when checking for relationships
+                    - Use proper WHERE clauses to constrain results
+                    - When using MIN/MAX in subqueries, be aware that multiple records might have the same min/max value
 
-            **Reference Context:**
-            {reference_context}
+                    POSTGRESQL DISTINCT/ORDER BY RULES:
+                    - When using SELECT DISTINCT, ORDER BY expressions MUST appear in the SELECT list
+                    - Use DISTINCT ON (column) for PostgreSQL-specific distinct behavior
+                    - Alternative: Use GROUP BY instead of DISTINCT when possible
+                    - If ORDER BY column isn't in SELECT, either add it to SELECT or remove ORDER BY
+                    - Example: SELECT DISTINCT col1, col2 FROM table ORDER BY col1, col2 - (RIGHT)
+                    - Example: SELECT DISTINCT col1 FROM table ORDER BY col2 - (WRONG)
 
-            **Conversation History:**
-            {conversation_context}
+                    BETTER SQL PATTERNS:
+                    - Instead of: SELECT DISTINCT column1 FROM table ORDER BY column2
+                    - Use: SELECT DISTINCT column1, column2 FROM table ORDER BY column2
+                    - Or use: SELECT DISTINCT ON (column1) column1, column2 FROM table ORDER BY column1, column2
+                    - Or use: SELECT column1 FROM table GROUP BY column1 ORDER BY column1
 
-            **Instructions:**
-            - Use the database schema information to generate accurate SQL queries
-            - Only use tables and columns explicitly mentioned in the schema information
-            - Always use proper SQL syntax for PostgreSQL
-            - If you generate SQL, explain what the query does and why
-            - Consider previous conversation context for follow-up questions
-            - If you cannot generate SQL due to missing information, explain specifically what you need
+                    Available Database Schemas:
+                    {db_context}
 
-            ** SQL query related Rules: **
-            - Use proper JOINs based on foreign key relationships shown in schema
-            - Include all relevant columns mentioned in the question
-            - Format with table.column references
-            - For location queries: Delhi → WHERE LOCATION_ID = 'IN01'
-            - Use ILIKE with % wildcards for case-insensitive text matching
-            - Use exact column names as shown in schema
-            - Follow the grain and primary key constraints
-            - Don't select table name in quotes
-            - Consider business rules when filtering or grouping data
+                    Reference Context:
+                    {reference_context}
 
-            **Response Format:**
-            Return a JSON object with these fields:
-            - "intent": "Brief description of query purpose"
-            - "sql_query": "CLEAN SQL QUERY WITHOUT COMMENTS OR NOTES"
-            - "explanation": "Natural language explanation"
-            - "tables_used": ["table1", "table2"] (list of tables used in SQL)
-            - "columns_referenced": ["table1.col1", "table2.col2"],
-            - "business_rules_applied": ["rule1", "rule2"] (business rules considered from given business context)
-            - "reference_context": ["ref1", "ref2"] (reference context used)
-            - "confidence": 0.0-1.0 (confidence in the response)
+                    Conversation History:
+                    {conversation_context}
 
-            User Query: {user_query}"""
+                    Instructions:
+                    - Use the database schema information to generate accurate SQL queries
+                    - Only use tables and columns explicitly mentioned in the schema information
+                    - Always use proper SQL syntax for PostgreSQL
+                    - If you generate SQL, explain what the query does and why
+                    - Consider previous conversation context for follow-up questions
+                    - If you cannot generate SQL due to missing information, explain specifically what you need
 
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.LLM_model,
-                messages=[{"role": "system", "content": system_prompt}],
-                # temperature=0.1,
-                response_format={"type": "json_object"}
-            )
-            
-            result = json.loads(response.choices[0].message.content)
-            
-            # If SQL query was generated, execute it
-            # if result.get("intent") == "sql_query" and result.get("sql_query"):
+                    SQL query related Rules: 
+                    - Use proper JOINs based on foreign key relationships shown in schema
+                    - Include all relevant columns mentioned in the question
+                    - Format with table.column references
+                    - For location queries: Delhi → WHERE LOCATION_ID = 'IN01'
+                    - Use ILIKE with % wildcards for case-insensitive text matching
+                    - Use exact column names as shown in schema
+                    - Follow the grain and primary key constraints
+                    - Don't select table name in quotes
+                    - Consider business rules when filtering or grouping data
 
-            if "sql_query" in result and result.get("sql_query"):
-                query_result = await self.execute_sql_query(result["sql_query"])
-                result["query_result"] = query_result
+                    Response Format:
+                    Return a JSON object with these fields:
+                    - "intent": "Brief description of query purpose"
+                    - "sql_query": "CLEAN SQL QUERY WITHOUT COMMENTS OR NOTES"
+                    - "explanation": "Natural language explanation"
+                    - "tables_used": ["table1", "table2"] (list of tables used in SQL)
+                    - "columns_referenced": ["table1.col1", "table2.col2"],
+                    - "business_rules_applied": ["rule1", "rule2"] (business rules considered from given business context)
+                    - "reference_context": ["ref1", "ref2"] (reference context used)
+                    - "confidence": 0.0-1.0 (confidence in the response)
+
+                    User Query: {user_query}"""
+                    
+                # Generate SQL with explanation using OpenAI
+                response = await self.client.chat.completions.create(
+                    model=self.LLM_model,
+                    messages=[{"role": "system", "content": system_prompt}],
+                    # temperature=0.1,
+                    response_format={"type": "json_object"}
+                )
                 
-                # Generate final natural language response with results
-                if query_result.get("success"):
-                    final_response = await self.generate_final_response(
-                        user_query, 
-                        result["sql_query"], 
-                        query_result["data"],
-                        result["explanation"],
-                        relevant_data
-                    )
-                    result["final_answer"] = final_response
+                result = json.loads(response.choices[0].message.content)
+                
+
+                if "sql_query" in result and result.get("sql_query"):
+                    query_result = await self.execute_sql_query(result["sql_query"])
+                    result["query_result"] = query_result
+                    
+                    # Generate final natural language response with results
+                    if query_result.get("success"):
+                        final_response = await self.generate_final_response(
+                            user_query, 
+                            result["sql_query"], 
+                            query_result["data"],
+                            result["explanation"],
+                            relevant_data
+                        )
+                        result["final_answer"] = final_response
+                        logger.info(f"SQL query succeeded on attempt {attempt + 1}/{max_retries + 1}")
+                        break
+                    else:
+                        # Log SQL error and prepare for retry
+                        error_msg = query_result.get("error", "Unknown SQL error")
+                        sql_errors.append({
+                            "query": result["sql_query"][:100] + "...",
+                            "error": error_msg,
+                            "attempt": attempt + 1
+                        })
+                        
+                        logger.warning(f"SQL attempt {attempt + 1} failed: {error_msg}")
+                        
+                        # If this was the last attempt, return error
+                        if attempt == max_retries:
+                            result["finalanswer"] = f"I tried {max_retries + 1} times but couldn't generate a working SQL query. Last error: {error_msg}"
+                            result["sql_errors"] = sql_errors
+                            result["confidence"] = 0.2
+                        
+                        # Continue to next retry (don't break)
                 else:
-                    result["final_answer"] = f"I generated this SQL query but encountered an error: {query_result.get('error', 'Unknown error')}"
-            else:
-                result["final_answer"] = result["explanation"]
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error generating SQL response: {e}")
-            return {
-                "intent": "error",
-                "explanation": f"I encountered an error while processing your query: {str(e)}",
-                "final_answer": "I'm sorry, I encountered an error while processing your request.",
-                "confidence": 0.0
-            }
-    
+                    # No SQL query generated
+                    result["finalanswer"] = result.get("explanation", "No query generated")
+                    break
+
+            except Exception as e:
+                logger.error(f"Error on SQL generation attempt {attempt + 1}: {e}")
+                if attempt == max_retries:
+                    return {
+                        "intent": "error",
+                        "explanation": f"Error after {max_retries + 1} attempts: {str(e)}",
+                        "finalanswer": "I encountered errors while processing your request.",
+                        "confidence": 0.0,
+                        "sql_errors": sql_errors
+                    }
+        return result   
     async def execute_sql_query(self, sql_query: str) -> Dict[str, Any]:
         """Safely execute SQL query"""
         if not db.pool:
@@ -488,8 +545,6 @@ class SQLRAGService:
         
         # Basic SQL injection protection - only allow SELECT statements
         sql_upper = sql_query.strip().upper()
-        # if not sql_upper.startswith('SELECT'):
-        #     return {"success": False, "error": "Only SELECT queries are allowed"}
         
         # Prevent dangerous operations
         dangerous_keywords = [
@@ -499,7 +554,6 @@ class SQLRAGService:
         for keyword in dangerous_keywords:
             if keyword in sql_upper:
                 return {"success": False, "error": f"Query contains forbidden keyword: {keyword}"}
-        
         try:
             async with db.pool.acquire() as connection:
                 rows = await connection.fetch(sql_query)
@@ -687,9 +741,148 @@ class SQLRAGService:
     #     """Get conversation history for context"""
     #     conversation_key = f"{user_id}_{project_id}"
     #     return self.conversation_memory.get(conversation_key, [])
-    
 
-    # **NEW: Intent Detection**
+
+    async def _llm_verify_po_intent(self, user_query: str) -> bool:
+        """Use LLM to verify if query is really about PO generation"""
+        try:
+            prompt = f"""
+                Analyze this user query and determine if the user wants to generate/create a purchase order (PO).
+
+                Query: "{user_query}"
+
+                Respond with only "YES" if the query is asking to:
+                - Generate, create, or make a purchase order
+                - Create a PO for a specific date
+                - Generate procurement documents
+                - Order materials due to shortfall
+
+                Respond with only "NO" if the query is asking about:
+                - Viewing existing POs
+                - Analyzing data
+                - General questions
+                - Other operations
+
+                Response:"""
+
+            response = await self.client.chat.completions.create(
+                model=self.NLP_LLM_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=5,
+                temperature=0.1
+            )
+            
+            result = response.choices[0].message.content.strip().upper()
+            return result == "YES"
+            
+        except Exception as e:
+            logger.warning(f"LLM verification failed: {e}")
+            return True  # Default to True if LLM fails
+        
+    async def extract_date_from_query_llm(self, user_query: str) -> str:
+        """Extract date from query using LLM - much more flexible"""
+        
+        try:
+            current_date = datetime.now().strftime("%m/%d/%Y")  # e.g., 09/22/2025
+            
+            prompt = f"""Extract the date from this user query about purchase order generation.
+
+                Today's date: {current_date}
+
+                User query: "{user_query}"
+
+                Rules:
+                - If user says "today" or "now" → return "today"
+                - If user says "tomorrow" → return "tomorrow" 
+                - If user says "yesterday" → return "yesterday"
+                - If user mentions specific dates like "sep 22nd", "22/09", "September 22" → return the exact text
+                - If user says "next monday", "this friday" → return the exact text
+                - If no date is mentioned → return "today"
+
+                Extract only the date portion. Examples:
+                - "generate PO for today" → "today"
+                - "create purchase order for tomorrow" → "tomorrow"
+                - "make PO for sep 22nd 2025" → "sep 22nd 2025"
+                - "generate PO for next monday" → "next monday"
+                - "create PO" → "today"
+
+                Response (only the date part):"""
+
+            response = await self.client.chat.completions.create(
+                model=self.NLP_LLM_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=20,
+                temperature=0.1
+            )
+            
+            extracted_date = response.choices[0].message.content.strip().lower()
+            
+            # Clean up common LLM artifacts
+            extracted_date = extracted_date.replace('"', '').replace("'", "").strip()
+            
+            # Default to today if extraction fails
+            if not extracted_date or len(extracted_date) < 2:
+                extracted_date = "today"
+                
+            logger.info(f"📅 LLM extracted date: '{user_query}' → '{extracted_date}'")
+            return extracted_date
+            
+        except Exception as e:
+            logger.error(f"LLM date extraction failed: {e}")
+            return "today"  # Safe fallback
+
+
+    async def handle_po_generation_request(self, user_query: str, user_id: int, project_id: str) -> Dict[str, Any]:
+        """Handle PO generation request - trigger workflow in background"""
+        
+        try:
+            # Extract date from query
+            extracted_date = await self.extract_date_from_query_llm(user_query)
+            
+            # Parse date
+            # parsed_date, is_valid = parse_user_date_safe(extracted_date)
+
+            parsed_date = await self.date_parser.parse_date_llm(extracted_date)
+
+            # Trigger PO workflow in background using existing service
+            logger.info(f"🤖 PO generation via chat: '{user_query}' -> '{extracted_date}' -> '{parsed_date}'")
+            
+            result = await po_workflow_service.start_po_workflow(
+                user_id=user_id,
+                project_id=project_id,
+                order_date=parsed_date,
+                trigger_query=f"chat:{user_query}"  # Mark as chat-triggered
+            )
+            
+            if result.get("success"):
+                return {
+                    "intent": "po_generation",
+                    "explanation": f"I've started generating a purchase order for {parsed_date} in the background.",
+                    "final_answer": f"🚀 PO Generation Started\n\nI've initiated purchase order generation for {parsed_date} in the background. You can continue our conversation while I process this.\n\n📋 Check the sidebar for real-time progress updates and generated POs.\n\n💬 Feel free to ask me other questions while the workflow runs!",
+                    "confidence": 0.95,
+                    "tables_used": [],
+                    "po_workflow_started": True
+                }
+            else:
+                return {
+                    "intent": "po_generation_failed",
+                    "explanation": f"Failed to start PO generation for {parsed_date}.",
+                    "final_answer": f"❌ I couldn't start the PO generation for {parsed_date}. {result.get('message', 'Please try again or check the system status.')}",
+                    "confidence": 0.8,
+                    "tables_used": []
+                }
+                
+        except Exception as e:
+            logger.error(f"Error handling PO generation request: {e}")
+            return {
+                "intent": "po_generation_error",
+                "explanation": f"System error during PO generation.",
+                "final_answer": f"❌ I encountered an error while trying to generate the purchase order. Please try again.",
+                "confidence": 0.5,
+                "tables_used": []
+            }
+
+    # Intent Detection
     async def detect_query_intent(self, user_query: str, conversation_history: List[Dict]) -> str:
         """Detect if user query is SQL-related, chit-chat, or clarification"""
         
@@ -699,15 +892,27 @@ class SQLRAGService:
             recent = [msg['content'][:50] for msg in conversation_history[-3:]]
             context = f"Recent conversation: {', '.join(recent)}"
 
-        prompt = f"""Classify this user query into one of three categories:
+        prompt = f"""You are a SQL assistant that helps users query databases and generate purchase orders. 
+    
+            Analyze this user query and classify it into ONE of these intents:
+                1. po_generation - User wants to generate/create purchase orders
+                - Keywords: "generate PO", "create purchase order", "make PO", "po for", "order materials"
+                - Examples: "generate PO for today", "create purchase order for tomorrow", "make PO for next week"
 
-            User Query: "{user_query}"
-            {context}
+                2. sql_query - User wants data analysis or database queries or business insights
+                - Questions about data, reports, analytics, trends, counts, sums
+                - Examples: "show me shortfall materials", "give me projection quantity for next month", "what's the inventory"
 
-            Categories:
-            1. "sql_query" - User wants data analysis, database queries, or business insights
-            2. "chit_chat" - User is greeting, thanking, or having general conversation
-            3. "clarification" - User is asking for help or clarification about what they can do
+                3. chit_chat - Casual conversation, greetings, general questions
+                - Greetings, casual talk, general questions not related to data or POs
+                - Examples: "hello", "how are you", "what's the weather"
+
+                4. clarification - User asking about capabilities or help
+                - Questions about what the assistant can do
+                - Examples: "what can you do", "help me", "how do I use this"
+
+            Current User Query: "{user_query}"
+            Previous conversation context: {context}
 
             Examples:
             - "Hello" → chit_chat
@@ -715,8 +920,10 @@ class SQLRAGService:
             - "What can you do?" → clarification
             - "Thanks!" → chit_chat
             - "How many customers do we have?" → sql_query
+            - "create PO for next week" → po_generation
+            - "generate purchase order for tomorrow" → po_generation
 
-            Return only the category name (sql_query, chit_chat, or clarification)."""
+            Respond with only the intent name: po_generation, sql_query, chit_chat, or clarification"""
 
         try:
             response = await self.client.chat.completions.create(
@@ -727,13 +934,17 @@ class SQLRAGService:
             )
             
             intent = response.choices[0].message.content.strip().lower()
-            return intent if intent in ['sql_query', 'chit_chat', 'clarification'] else 'sql_query'
+            if intent == 'po_generation':
+                # Further verify with secondary check
+                is_po = await self._llm_verify_po_intent(user_query)
+                return 'po_generation' if is_po else 'sql_query'
+            return intent if intent in ['po_generation', 'sql_query', 'chit_chat', 'clarification'] else 'sql_query'
             
         except Exception as e:
             logger.error(f"Intent detection failed: {e}")
             return 'sql_query'  # Default to SQL query
 
-    # **NEW: Handle Chit-Chat**
+    # NEW: Handle Chit-Chat
     async def generate_chit_chat_response(self, user_query: str, conversation_history: List[Dict]) -> str:
         """Generate friendly conversational responses"""
         
@@ -786,22 +997,27 @@ class SQLRAGService:
             logger.error(f"Chit-chat generation failed: {e}")
             return "I'm here to help you with your data queries. What would you like to know?"
 
-    # **NEW: Handle Clarification Requests**
+    # NEW: Handle Clarification Requests
     async def generate_clarification_response(self, user_query: str, conversation_history: List[Dict]) -> str:
         """Handle questions about capabilities and help requests"""
         
         help_response = """I'm your SQL Assistant! Here's what I can help you with:
 
-            🔍 **Data Queries**: Ask questions about your data in natural language
+            🔍 Data Queries: Ask questions about your data in natural language
             - "Show me sales for last quarter"
             - "How many customers do we have?"
             - "What's the average order value?"
 
-            📊 **Data Analysis**: Get insights and summaries
+            📊 Data Analysis: Get insights and summaries
             - "Which products are performing best?"
             - "Show me trends in customer behavior"
 
-            💬 **Follow-up Questions**: Build on previous queries
+            🛒 Purchase Order Generation: Create POs automatically
+            - "generate PO for today"
+            - "create purchase order for tomorrow"
+            - "make PO for sep 22nd 2025"
+
+            💬 Follow-up Questions: Build on previous queries
             - "Add a filter for region"
             - "Sort that by date"
             - "Show me more details"
@@ -812,9 +1028,22 @@ class SQLRAGService:
         if any(word in query_lower for word in ['help', 'what can you', 'how do i', 'what do you do']):
             return help_response
         
-        return "I can help you query your database and analyze your data. Just ask me questions in natural language! For example: 'Show me sales data for last month' or 'How many customers do we have?'"
+        return "I can help you query your database, analyze your data, and generate purchase orders.. Just ask me questions in natural language! For example: 'Show me sales data for last month' or 'How many customers do we have?'"
+    
+    def _check_shortfall_in_data(self, data: List[Dict]) -> bool:
+        """Check if SQL results indicate shortfall patterns"""
+        if not data:
+            return False
+        
+        data_str = str(data).lower()
+        shortfall_indicators = [
+            'shortfall', 'shortage', 'insufficient', 'negative', 
+            'below minimum', 'out of stock', 'low inventory'
+        ]
+        
+        return any(indicator in data_str for indicator in shortfall_indicators)
 
-    # **ENHANCED: Main Query Processing**
+    # Main Query Processing
     async def process_user_query(
         self,
         user_query: str,
@@ -835,9 +1064,12 @@ class SQLRAGService:
             # Detect intent
             intent = await self.detect_query_intent(user_query, conversation_history)
             logger.info(f"Detected intent: {intent} for query: '{user_query}'")
-            
+
             # Step 2: Route based on intent
-            if intent == 'chit_chat':
+            if intent == 'po_generation':
+                result = await self.handle_po_generation_request(user_query, user_id, project_id)
+            
+            elif intent == 'chit_chat':
                 response_text = await self.generate_chit_chat_response(user_query, conversation_history)
                 result = {
                     "intent": "chit_chat",
@@ -868,8 +1100,15 @@ class SQLRAGService:
             if result.get("query_result") and result["query_result"].get("success"):
                 data = result["query_result"]["data"]
                 row_count = len(data)
-                
-                # Store nested (existing behavior)
+                if self._check_shortfall_in_data(data):
+                    result["po_suggestion"] = {
+                        "suggest_po": True,
+                        "reason": "Query results indicate material shortfall",
+                        "suggestion_text": "💡 I notice this data shows material shortfalls. Would you like me to generate purchase orders to address these shortages? Just say 'generate PO for today' or specify a date."
+                    }
+                    result["final_answer"] += "\n\n" + result["po_suggestion"]["suggestion_text"]
+
+                # Store nested
                 if row_count > 10:
                     result["query_result"]["sample_data"] = data[:10]
                 else:

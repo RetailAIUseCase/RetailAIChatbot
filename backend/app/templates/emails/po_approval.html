@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Purchase Order Approval Required</title>
+    <style>
+        /* Reset styles for Outlook */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            margin: 0 !important; 
+            padding: 0 !important; 
+            font-family: Arial, sans-serif !important; 
+            background-color: #f5f5f5 !important; 
+            color: #333333 !important; 
+            line-height: 1.6 !important;
+            -webkit-text-size-adjust: 100% !important;
+            -ms-text-size-adjust: 100% !important;
+        }
+        
+        /* Force Outlook to respect table width */
+        table { border-collapse: collapse !important; }
+        .container { 
+            width: 100% !important; 
+            max-width: 650px !important; 
+            margin: 0 auto !important; 
+        }
+        
+        .po-number { 
+            font-family: 'Courier New', monospace !important; 
+            background-color: #e8e8e8 !important; 
+            padding: 4px 8px !important; 
+            border-radius: 3px !important;
+            font-weight: bold !important;
+        }
+        
+        .amount { 
+            color: #DC3545 !important; 
+            font-weight: bold !important; 
+            font-size: 18px !important; 
+        }
+        
+        .btn {
+            display: inline-block !important;
+            padding: 10px 20px !important;
+            margin: 0 10px !important;
+            text-decoration: none !important;
+            border-radius: 4px !important;
+            font-size: 14px !important;
+            font-weight: 500 !important;
+            border: 2px solid !important;
+            text-align: center !important;
+            min-width: 160px !important;
+        }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+    
+    <!-- Wrapper table for Outlook -->
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                
+                <!-- Main container -->
+                <table class="container" role="presentation" cellspacing="0" cellpadding="0" border="0" width="650" style="width: 100%; max-width: 650px; background-color: #ffffff; border: 1px solid #e0e0e0;">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td style="background-color: #333333; padding: 25px; text-align: center; border-bottom: 3px solid #FF6600;">
+                            <h1 style="color: #ffffff; font-size: 24px; font-weight: normal; margin: 0 0 5px 0;">{{company_name}}</h1>
+                            <p style="color: #cccccc; font-size: 16px; font-weight: normal; margin: 0;">Procurement Management System</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content area -->
+                    <tr>
+                        <td style="padding: 30px;">
+                            
+                            <!-- Alert -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-bottom: 25px;">
+                                <tr>
+                                    <td style="background-color: #fff3e0; border-left: 4px solid #FF6600; padding: 15px;">
+                                        <p style="margin: 0; color: #333333;"><strong style="color: #FF6600;">Approval Required:</strong> This purchase order exceeds the approval threshold of ${{threshold}} and requires finance manager authorization.</p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Greeting -->
+                            <h2 style="color: #333333; font-size: 20px; margin: 25px 0 15px 0;">Dear {{approver_name}},</h2>
+                            <p style="color: #555555; margin-bottom: 25px;">
+                                A purchase order has been generated that requires your approval before it can be sent to the vendor. 
+                                Please review the details below and take the appropriate action.
+                            </p>
+                            
+                            <!-- PO Details -->
+                            <h3 style="color: #333333; font-size: 18px; margin-bottom: 15px; border-bottom: 2px solid #FF6600; padding-bottom: 5px; display: inline-block;">Purchase Order Details</h3>
+                            
+                            <!-- Details table -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="width: 100%; margin: 20px 0; background-color: #fafafa;">
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; border-bottom: 1px solid #e0e0e0; font-weight: 600; color: #333333; width: 30%;">PO Number</td>
+                                    <td style="padding: 12px; color: #555555; border-bottom: 1px solid #e0e0e0;">
+                                        <span style="font-family: 'Courier New', monospace; background-color: #e8e8e8; padding: 4px 8px; border-radius: 3px; font-weight: bold;">{{po_number}}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; border-bottom: 1px solid #e0e0e0; font-weight: 600; color: #333333;">Vendor</td>
+                                    <td style="padding: 12px; color: #555555; border-bottom: 1px solid #e0e0e0;"><strong>{{vendor_name}}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; border-bottom: 1px solid #e0e0e0; font-weight: 600; color: #333333;">Vendor Email</td>
+                                    <td style="padding: 12px; color: #555555; border-bottom: 1px solid #e0e0e0;">{{vendor_email}}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; border-bottom: 1px solid #e0e0e0; font-weight: 600; color: #333333;">Total Amount</td>
+                                    <td style="padding: 12px; color: #555555; border-bottom: 1px solid #e0e0e0;">
+                                        <span style="color: #DC3545; font-weight: bold; font-size: 18px;">${{total_amount}}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; border-bottom: 1px solid #e0e0e0; font-weight: 600; color: #333333;">Related Orders</td>
+                                    <td style="padding: 12px; color: #555555; border-bottom: 1px solid #e0e0e0;">{{order_numbers}}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px; background-color: #f0f0f0; font-weight: 600; color: #333333;">Generated On</td>
+                                    <td style="padding: 12px; color: #555555;">{{timestamp}}</td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Actions -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 30px 0;">
+                                <tr>
+                                    <td style="background-color: #fafafa; border: 1px solid #e0e0e0; padding: 25px; text-align: center;">
+                                        <h3 style="color: #333333; margin: 0 0 20px 0;">Required Action</h3>
+                                        <p style="color: #555555; margin: 0 0 20px 0;">Please review the attached purchase order document and choose one of the following options:</p>
+                                        
+                                        <!-- Action buttons -->
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center">
+                                            <tr>
+                                                <td style="padding: 0 5px;">
+                                                    <a href="{{approve_link}}" style="background-color: #ffffff; color: #28A745; border: 2px solid #28A745; display: inline-block; padding: 10px 20px; margin: 0 5px; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: 500; text-align: center; min-width: 160px;">✓ Approve Purchase Order</a>
+                                                </td>
+                                                <td style="padding: 0 5px;">
+                                                    <a href="{{reject_link}}" style="background-color: #ffffff; color: #DC3545; border: 2px solid #DC3545; display: inline-block; padding: 10px 20px; margin: 0 5px; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: 500; text-align: center; min-width: 160px;">✗ Reject Purchase Order</a>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <p style="color: #666666; font-size: 13px; margin: 15px 0 0 0;">
+                                            📎 Complete purchase order document is attached to this email
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Additional Info -->
+                            <h4 style="color: #333333; margin: 25px 0 10px 0;">Important Notes:</h4>
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td style="color: #555555; padding-left: 20px;">
+                                        • Upon approval, the PO will be automatically sent to the vendor<br>
+                                        • The requestor will be notified of your decision<br>
+                                        • This request will expire in 48 hours<br>
+                                        • All approval actions are logged and auditable
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Security -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 25px 0;">
+                                <tr>
+                                    <td style="background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 20px; border-radius: 4px;">
+                                        <h4 style="color: #333333; margin: 0 0 10px 0;">🔐 Security Information</h4>
+                                        <p style="color: #555555; font-size: 14px; margin: 0;">
+                                            This approval request is personalized for you and contains secure links that expire in 48 hours. 
+                                            Please do not forward this email to others. If you have any questions, contact the procurement team.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #333333; padding: 20px; text-align: center;">
+                            <p style="color: #cccccc; font-size: 13px; margin: 0 0 5px 0;">
+                                <strong style="color: #FF6600;">{{company_name}}</strong> - Procurement Management System
+                            </p>
+                            <p style="color: #cccccc; font-size: 13px; margin: 0 0 5px 0;">
+                                Generated: {{timestamp}} | Secure Token: {{approval_token}}...
+                            </p>
+                            <p style="color: #cccccc; font-size: 13px; margin: 0;">
+                                For assistance, contact: {{help_email}}
+                            </p>
+                        </td>
+                    </tr>
+                    
+                </table>
+                
+            </td>
+        </tr>
+    </table>
+
+</body>
+</html>

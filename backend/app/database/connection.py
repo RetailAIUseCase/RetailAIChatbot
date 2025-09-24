@@ -2,6 +2,7 @@
 Database connection and operations
 """
 import json
+import token
 import asyncpg
 from typing import List, Optional, Dict, Any
 from app.config.settings import settings
@@ -77,7 +78,8 @@ class Database:
                 # Single query to check ALL tables at once
                 tables_to_check = ['users', 'projects', 'documents', 'conversations', 
                                 'metadata_embeddings', 'business_logic_embeddings', 
-                                'reference_embeddings', 'chat_messages']
+                                'reference_embeddings', 'chat_messages',
+                                'purchase_orders', 'po_line_items', 'po_approval_requests', 'po_workflows']
                 
                 existing_tables = await connection.fetch("""
                     SELECT table_name 
@@ -99,7 +101,11 @@ class Database:
                     'idx_metadata_embeddings_document_id', 'idx_metadata_embeddings_project_id', 'idx_metadata_embeddings_user_id',
                     'idx_business_logic_embeddings_document_id', 'idx_business_logic_embeddings_project_id', 'idx_business_logic_embeddings_user_id',
                     'idx_reference_embeddings_document_id', 'idx_reference_embeddings_project_id', 'idx_reference_embeddings_user_id',
-                    'idx_metadata_embeddings_hnsw', 'idx_business_logic_embeddings_hnsw', 'idx_reference_embeddings_hnsw'
+                    'idx_metadata_embeddings_hnsw', 'idx_business_logic_embeddings_hnsw', 'idx_reference_embeddings_hnsw',
+                    'idx_po_workflow_status', 
+                    #'idx_notifications_user',
+                    'idx_po_user_project', 'idx_po_status', 'idx_po_line_items_po_number', 'idx_po_order_date', 'idx_po_user_project_date',
+                    'idx_po_approval_token'
                 ]
                 
                 existing_indexes = await connection.fetch("""
@@ -130,7 +136,7 @@ class Database:
         # Order matters for foreign key constraints
         table_order = ['users', 'projects', 'documents', 'conversations', 
                     'metadata_embeddings', 'business_logic_embeddings', 
-                    'reference_embeddings', 'chat_messages']
+                    'reference_embeddings', 'chat_messages', 'purchase_orders', 'po_line_items', 'po_approval_requests', 'po_workflows']
         
         table_queries = {
             'users': """
@@ -239,7 +245,85 @@ class Database:
                     tables_used TEXT[],
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
+            """,
+            'purchase_orders':"""
+                CREATE TABLE IF NOT EXISTS purchase_orders (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    po_number VARCHAR(50) UNIQUE NOT NULL,
+                    workflow_id VARCHAR(255) UNIQUE,
+                    user_id INTEGER REFERENCES users(id),
+                    project_id UUID REFERENCES projects(id),
+                    vendor_id VARCHAR(50) NOT NULL,
+                    vendor_name VARCHAR(255) NOT NULL,
+                    vendor_email VARCHAR(255) NOT NULL,
+                    total_amount DECIMAL(15, 2) NOT NULL,
+                    pdf_path VARCHAR(500),
+                    status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('generated', 'pending_approval', 'approved', 'rejected', 'sent_to_vendor')),
+                    needs_approval BOOLEAN DEFAULT FALSE,
+                    comment TEXT,
+                    approved_by VARCHAR(255),
+                    order_date DATE NOT NULL,
+                    approved_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """,
+            'po_line_items':"""
+                CREATE TABLE IF NOT EXISTS po_line_items (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    po_number VARCHAR(50) REFERENCES purchase_orders(po_number) ON DELETE CASCADE,
+                    matnr VARCHAR(50) NOT NULL,
+                    matdesc VARCHAR(255),
+                    matcat VARCHAR(50),
+                    quantity INTEGER NOT NULL,
+                    unit_cost DECIMAL(10, 2) NOT NULL,
+                    total_cost DECIMAL(15, 2) NOT NULL,
+                    vendor_id VARCHAR(50) NOT NULL,
+                    order_number VARCHAR(50),
+                    shortfall_reason TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """,
+            'po_approval_requests':"""
+                CREATE TABLE IF NOT EXISTS po_approval_requests (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    po_number VARCHAR(50) REFERENCES purchase_orders(po_number) ON DELETE CASCADE,
+                    approver_email TEXT NOT NULL,
+                    approval_token VARCHAR(255) UNIQUE NOT NULL,
+                    token_expires_at TIMESTAMPTZ NOT NULL,
+                    status VARCHAR(50) NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
+                    comment TEXT,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                );
+            """,
+            # 'purchase_notifications': """
+            #     CREATE TABLE IF NOT EXISTS purchase_notifications (
+            #         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            #         po_number VARCHAR(50) REFERENCES purchase_orders(po_number),
+            #         user_id INTEGER REFERENCES users(id),
+            #         notification_type VARCHAR(50) NOT NULL,
+            #         message TEXT,
+            #         timestamp TIMESTAMPTZ DEFAULT now()
+            #     );
+            # """,
+            'po_workflows': """
+                CREATE TABLE IF NOT EXISTS po_workflows (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    workflow_id VARCHAR(255) UNIQUE NOT NULL,
+                    project_id UUID NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    order_date DATE NOT NULL,
+                    current_step INTEGER DEFAULT 1,
+                    status VARCHAR(50) DEFAULT 'running', -- running, completed, failed
+                    step_results JSONB,
+                    error_message TEXT,
+                    trigger_query TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
             """
+
         }
         
         for table in table_order:
@@ -266,7 +350,15 @@ class Database:
             'idx_reference_embeddings_user_id': "CREATE INDEX IF NOT EXISTS  idx_reference_embeddings_user_id ON reference_embeddings(user_id);",
             'idx_metadata_embeddings_hnsw': "CREATE INDEX IF NOT EXISTS  idx_metadata_embeddings_hnsw ON metadata_embeddings USING hnsw(embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);",
             'idx_business_logic_embeddings_hnsw': "CREATE INDEX IF NOT EXISTS  idx_business_logic_embeddings_hnsw ON business_logic_embeddings USING hnsw(embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);",
-            'idx_reference_embeddings_hnsw': "CREATE INDEX IF NOT EXISTS  idx_reference_embeddings_hnsw ON reference_embeddings USING hnsw(embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);"
+            'idx_reference_embeddings_hnsw': "CREATE INDEX IF NOT EXISTS  idx_reference_embeddings_hnsw ON reference_embeddings USING hnsw(embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);",
+            'idx_po_workflow_status': "CREATE INDEX IF NOT EXISTS idx_po_workflow_status ON po_workflows(workflow_id, status);",
+            # 'idx_notifications_user': "CREATE INDEX IF NOT EXISTS idx_notifications_user ON purchase_notifications(user_id, timestamp);",
+            'idx_po_user_project': "CREATE INDEX IF NOT EXISTS idx_po_user_project ON purchase_orders(user_id, project_id);",
+            'idx_po_status': "CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_orders(status);",
+            'idx_po_line_items_po_number': "CREATE INDEX IF NOT EXISTS idx_po_line_items_po_number ON po_line_items(po_number);",
+            'idx_po_order_date': "CREATE INDEX IF NOT EXISTS idx_po_order_date ON purchase_orders(order_date);",
+            'idx_po_user_project_date': "CREATE INDEX IF NOT EXISTS idx_po_user_project_date ON purchase_orders(user_id, project_id, order_date);",
+            'idx_po_approval_token': "CREATE INDEX IF NOT EXISTS idx_po_approval_token ON po_approval_requests(approval_token);"
         }
         
         # Create basic indexes first (fast)
@@ -293,6 +385,14 @@ class Database:
                 ALTER TABLE reference_embeddings ENABLE ROW LEVEL SECURITY;
                 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
                 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE purchase_orders ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE po_line_items ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE po_approval_requests ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE po_workflows ENABLE ROW LEVEL SECURITY;
+                -- ALTER TABLE purchase_notifications ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE po_approval_requests DROP CONSTRAINT unique_po_number;
+                ALTER TABLE po_approval_requests ADD CONSTRAINT unique_po_number UNIQUE (po_number);
+
             
                 -- Drop existing policies if they exist
                 DROP POLICY IF EXISTS "users_own_projects" ON projects;
@@ -302,6 +402,9 @@ class Database:
                 DROP POLICY IF EXISTS "users_own_reference_embeddings" ON reference_embeddings;
                 DROP POLICY IF EXISTS "users_own_conversations" ON conversations;
                 DROP POLICY IF EXISTS "users_own_chat_messages" ON chat_messages;
+                DROP POLICY IF EXISTS "users_own_pos" ON purchase_orders;
+                DROP POLICY IF EXISTS "users_own_po_lines" ON po_line_items;
+                                 
                 -- Create RLS Policies
                 CREATE POLICY "users_own_projects" ON projects
                     FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
@@ -323,6 +426,13 @@ class Database:
 
                 CREATE POLICY "users_own_chat_messages" ON chat_messages
                     FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
+                
+                CREATE POLICY "users_own_pos" ON purchase_orders
+                    FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
+                    
+                CREATE POLICY "users_own_po_lines" ON po_line_items
+                    FOR ALL USING (po_number IN (SELECT po_number FROM purchase_orders WHERE user_id = current_setting('app.current_user_id', true)::integer));
+                                 
             """)
     
     # USER METHODS
@@ -341,7 +451,23 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to get user by email: {e}")
             raise
-    
+
+    async def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get user by ID"""
+        if not self.pool:
+            raise Exception("Database pool not initialized")
+
+        query = "SELECT * FROM users WHERE id = $1"
+        try:
+            async with self.pool.acquire() as connection:
+                row = await connection.fetchrow(query, user_id)
+                if row:
+                    return dict(row)
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get user by ID: {e}")
+            raise
+
     async def create_user(self, email: str, hashed_password: str, full_name: str = None) -> Dict[str, Any]:
         """Create a new user"""
         if not self.pool:
@@ -809,7 +935,433 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to get conversation messages: {e}")
             raise
-    
+
+    # PO CRUD Operations
+    async def create_workflow(
+        self, user_id: int, project_id: str, order_date: date, trigger_query: str = None
+    ) -> Dict[str, Any]:
+        """Create new workflow record"""
+        try:
+            # Ensure order_date is a date object
+            if isinstance(order_date, str):
+                order_date = datetime.strptime(order_date, '%Y-%m-%d').date()
+            
+            async with self.pool.acquire() as connection:
+                workflow_id = f"wf_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{user_id}"
+                initial_results = json.dumps({
+                    "step_name": "workflow_created",
+                    "trigger_query": trigger_query
+                })
+                result = await connection.fetchrow("""
+                    INSERT INTO po_workflows (
+                        workflow_id, user_id, project_id, order_date, 
+                        trigger_query, status, current_step, step_results, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    RETURNING workflow_id
+                """, 
+                    workflow_id, user_id, project_id, order_date,  # order_date is now proper date object
+                    trigger_query, "running", 0, initial_results,
+                    datetime.now(), datetime.now()
+                )
+                
+                if result:
+                    logger.info(f"✅ Created workflow: {workflow_id} for user {user_id}, project {project_id}, date {order_date}")
+                    return {
+                        "success": True,
+                        "workflow_id": workflow_id,
+                        "user_id": user_id,
+                        "project_id": project_id,
+                        "order_date": order_date.strftime('%Y-%m-%d')  # Convert back to string for JSON
+                    }
+                else:
+                    return {"success": False, "error": "Failed to create workflow record"}
+                
+        except ValueError as e:
+            logger.error(f"Invalid date format in create_workflow: {e}")
+            return {"success": False, "error": f"Invalid date format: {order_date}"}
+        except Exception as e:
+            logger.error(f"Failed to create workflow: {e}")
+            return {"success": False, "error": str(e)}
+
+
+    async def update_workflow(self, workflow_id: str, step: int, status: str, results: Dict = None, error: str = None):
+        """Update workflow progress"""
+        query = """
+        UPDATE po_workflows 
+        SET current_step = $2, status = $3, step_results = $4, error_message = $5, updated_at = CURRENT_TIMESTAMP
+        WHERE workflow_id = $1
+        """
+        
+        try:
+            results_json = json.dumps(results) if results is not None else None
+            async with self.pool.acquire() as connection:
+                await connection.execute(query, workflow_id, step, status, results_json, error)
+        except Exception as e:
+            logger.error(f"Failed to update workflow: {e}")
+
+    async def insert_po(self, po_data: Dict[str, Any]) -> Optional[str]:
+        """Insert purchase order"""
+
+        query = """
+        INSERT INTO purchase_orders (
+            po_number, workflow_id, project_id, user_id, vendor_id, vendor_name, vendor_email,
+            total_amount, status, needs_approval, order_date, pdf_path, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) 
+        RETURNING id::text
+        """
+        
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {po_data['user_id']}")
+                row = await connection.fetchrow(
+                    query, 
+                    po_data['po_number'], po_data['workflow_id'], po_data['project_id'],
+                    po_data['user_id'], po_data['vendor_id'], po_data['vendor_name'],
+                    po_data['vendor_email'], po_data['total_amount'], po_data['status'],
+                    po_data['needs_approval'], self._convert_date_for_db(po_data['order_date']), po_data['pdf_path'],
+                    po_data['created_at'], po_data['updated_at']
+                )
+                return str(row['id']) if row else None
+        except Exception as e:
+            logger.error(f"Failed to insert PO: {e}")
+            raise
+
+    async def insert_po_items(self, po_number: str, items: List[Dict]):
+        """Insert PO line items (flexible for multiple material types)"""
+        query = """
+        INSERT INTO po_line_items (po_number, matnr, matdesc, matcat, quantity, unit_cost, total_cost, vendor_id, order_number, shortfall_reason, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        """
+        
+        try:
+            async with self.pool.acquire() as connection:
+                for item in items:
+                    await connection.execute(
+                        query, po_number, 
+                        item.get('matnr'), 
+                        item.get('matdesc'), 
+                        item.get('matcat'),
+                        item.get('quantity'), 
+                        item.get('unit_cost'), 
+                        item.get('total_cost'),
+                        item.get('vendor_id'),
+                        item.get('order_number'),
+                        item.get('shortfall_reason'),
+                        datetime.utcnow()
+                    )
+        except Exception as e:
+            logger.error(f"Failed to insert PO items: {e}")
+            raise
+
+    async def delete_po(self, po_number: str) -> bool:
+        """Delete PO record - used for cleanup when PO generation fails"""
+        try:
+            async with self.pool.acquire() as connection:
+                # Delete PO items first (foreign key constraint)
+                await connection.execute(
+                    "DELETE FROM po_line_items WHERE po_number = $1", po_number
+                )
+                
+                # Delete PO record
+                result = await connection.execute(
+                    "DELETE FROM purchase_orders WHERE po_number = $1", po_number
+                )
+                
+                # Check if any rows were deleted
+                deleted_count = int(result.split()[-1]) if result else 0
+                
+                if deleted_count > 0:
+                    logger.info(f"✅ Cleanup: Deleted PO record: {po_number}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Cleanup: No PO record found to delete: {po_number}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"❌ Cleanup error deleting PO {po_number}: {e}")
+            return False
+
+    async def fetch_pos_by_date(self, user_id: int, project_id: str, order_date: str) -> List[Dict]:
+        """Fetch POs by date and project"""
+
+        query = """
+        SELECT po.po_number, po.vendor_name, po.total_amount, po.status, po.needs_approval, 
+               po.pdf_path, po.order_date, po.created_at::text, po.updated_at::text, po.comment
+        FROM purchase_orders po
+        WHERE po.user_id = $1 AND po.project_id = $2 AND po.order_date = $3
+        ORDER BY po.created_at DESC
+        """
+        
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                rows = await connection.fetch(query, user_id, project_id, self._convert_date_for_db(order_date))
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to fetch POs: {e}")
+            return []
+
+    async def fetch_all_pos_by_project(self, user_id: int, project_id: str) -> List[Dict]:
+        """Fetch all POs for a project"""
+        query = """
+        SELECT po.po_number, po.vendor_name, po.total_amount, po.status, po.needs_approval,
+               po.pdf_path, po.order_date, po.created_at::text, po.updated_at::text
+        FROM purchase_orders po
+        WHERE po.user_id = $1 AND po.project_id = $2
+        ORDER BY po.order_date DESC, po.created_at DESC
+        """
+        
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                rows = await connection.fetch(query, user_id, project_id)
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to fetch all POs: {e}")
+            return []
+        
+    async def get_po_by_number(self, po_number: str) -> Optional[Dict]:
+        """Get PO details by number"""
+        query = """
+        SELECT po_number, vendor_name, vendor_email, total_amount, status, 
+            pdf_path, user_id, project_id, order_date, workflow_id
+        FROM purchase_orders 
+        WHERE po_number = $1
+        """
+        try:
+            async with self.pool.acquire() as connection:
+                row = await connection.fetchrow(query, po_number)
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get PO by number: {e}")
+            return None
+
+    async def get_po_details_with_items(self, po_number: str, user_id: int) -> Optional[Dict]:
+        """Get detailed PO information with line items"""
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                
+                po_details = await connection.fetchrow("""
+                    SELECT po.po_number, po.vendor_name, po.vendor_email, po.total_amount, 
+                        po.status, po.needs_approval, po.pdf_path, po.order_date, 
+                        po.created_at::text, po.updated_at::text, po.comment,
+                        po.workflow_id::text
+                    FROM purchase_orders po
+                    WHERE po.po_number = $1 AND po.user_id = $2
+                """, po_number, user_id)
+                
+                if not po_details:
+                    return None
+                
+                # Get PO items
+                po_items = await connection.fetch("""
+                    SELECT matnr, matdesc, matcat, quantity, unit_cost, total_cost
+                    FROM po_line_items
+                    WHERE po_number = $1
+                """, po_number)
+                
+                result = dict(po_details)
+                result['items'] = [dict(item) for item in po_items]
+                
+                return result
+                
+        except Exception as e:
+            logger.error(f"Error getting PO details with items: {e}")
+            return None
+        
+    async def get_pos_by_workflow(self, workflow_id: str, user_id: int) -> List[Dict]:
+        """Get POs generated by a specific workflow"""
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                
+                pos = await connection.fetch("""
+                    SELECT po_number, vendor_name, total_amount, status, needs_approval,
+                        pdf_path, created_at::text, updated_at::text
+                    FROM purchase_orders 
+                    WHERE workflow_id = $1 AND user_id = $2
+                    ORDER BY created_at DESC
+                """, workflow_id, user_id)
+                
+                return [dict(po) for po in pos]
+                
+        except Exception as e:
+            logger.error(f"Error fetching workflow POs: {e}")
+            return []
+        
+    async def update_po_status(self, po_number: str, status: str, rejection_reason: str = None):
+        """Update PO status"""
+        if rejection_reason:
+            query = """
+            UPDATE purchase_orders 
+            SET status = $1, comment = $2, updated_at = CURRENT_TIMESTAMP 
+            WHERE po_number = $3
+            """
+            params = [status, rejection_reason, po_number]
+        else:
+            query = """
+            UPDATE purchase_orders 
+            SET status = $1, updated_at = CURRENT_TIMESTAMP 
+            WHERE po_number = $2
+            """
+            params = [status, po_number]
+        
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(query, *params)
+            logger.info(f"PO {po_number} status updated to {status}")
+        except Exception as e:
+            logger.error(f"Failed to update PO status: {e}")
+
+    async def create_approval_request_with_token(
+        self, 
+        po_number: str, 
+        approver_email: str, 
+        approval_token: str,
+        token_expires_at: datetime
+    ) -> bool:
+        """Create approval request with specific approver and token"""
+        query = """
+        INSERT INTO po_approval_requests (
+            po_number, approver_email, approval_token, 
+            token_expires_at, status
+        ) VALUES ($1, $2, $3, $4, 'pending')
+        ON CONFLICT (po_number) DO UPDATE SET
+            approver_email = EXCLUDED.approver_email,
+            approval_token = EXCLUDED.approval_token,
+            token_expires_at = EXCLUDED.token_expires_at,
+            status = 'pending',
+            updated_at = CURRENT_TIMESTAMP
+        """
+        
+        try:
+            async with self.pool.acquire() as connection:
+                # First verify this PO actually needs approval (exceeds threshold)
+                po_check = await connection.fetchrow("""
+                    SELECT total_amount, needs_approval 
+                    FROM purchase_orders 
+                    WHERE po_number = $1
+                """, po_number)
+                
+                if not po_check or not po_check['needs_approval']:
+                    logger.warning(f"Attempted to create approval request for PO {po_number} that doesn't need approval")
+                    return False
+                
+                await connection.execute(
+                    query, po_number, approver_email, approval_token, token_expires_at
+                )
+                
+                logger.info(f"Approval request created for high-value PO {po_number} (${po_check['total_amount']:,.2f})")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to create approval request with token: {e}")
+            return False
+
+    async def validate_approval_token(self, token: str) -> Optional[Dict]:
+        """Validate approval token and return approval request details"""
+        query = """
+        SELECT ar.po_number, ar.approver_email as approver_email, 
+            ar.status, ar.token_expires_at,
+            po.vendor_name, po.total_amount, po.user_id, po.project_id
+        FROM po_approval_requests ar
+        JOIN purchase_orders po ON ar.po_number = po.po_number
+        WHERE ar.approval_token = $1 AND ar.token_expires_at > CURRENT_TIMESTAMP
+        AND ar.status = 'pending'
+        """
+        
+        try:
+            async with self.pool.acquire() as connection:
+                row = await connection.fetchrow(query, token)
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to validate approval token: {e}")
+            return None
+        
+
+    async def update_approval_request(self, po_number: str, status: str, user_id: str, comment: str = None):
+        """Update approval request status"""
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                query = """
+                UPDATE po_approval_requests 
+                SET status = $1, comment = $2, updated_at = CURRENT_TIMESTAMP
+                WHERE po_number = $3
+                """
+                await connection.execute(query, status, comment, po_number)
+        except Exception as e:
+            logger.error(f"Failed to update approval request: {e}")
+
+    async def process_approval_decision(
+        self, 
+        token: str, 
+        decision: str, 
+        approver_email: str, 
+        comment: str = None
+    ) -> Dict[str, Any]:
+        """Process approval/rejection decision"""
+        query = """
+        UPDATE po_approval_requests 
+        SET status = $2, comment = $3, updated_at = CURRENT_TIMESTAMP
+        WHERE approval_token = $1 AND approver_email = $4
+        AND status = 'pending' AND token_expires_at > CURRENT_TIMESTAMP
+        RETURNING po_number
+        """
+
+        try:
+            async with self.pool.acquire() as connection:
+                row = await connection.fetchrow(query, token, decision, comment, approver_email)
+                
+                if row:
+                    po_number = row['po_number']
+                    # Update PO status
+                    await self.update_po_status(po_number, decision, comment)
+                    # After successful update, invalidate token immediately
+                    await connection.execute("UPDATE po_approval_requests SET approval_token = 'USED_' || approval_token WHERE approval_token = $1", token)
+                    return {"success": True, "po_number": po_number}
+                else:
+                    return {"success": False, "error": "Invalid token or unauthorized approver"}
+                    
+        except Exception as e:
+            logger.error(f"Failed to process approval decision: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_workflow_status(self, workflow_id: str) -> Optional[Dict]:
+        """Get workflow status"""
+        query = """
+        SELECT workflow_id::text, current_step, status, step_results, error_message, 
+               created_at::text, updated_at::text
+        FROM po_workflows 
+        WHERE workflow_id = $1
+        """
+        
+        try:
+            async with self.pool.acquire() as connection:
+                row = await connection.fetchrow(query, workflow_id)
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get workflow status: {e}")
+            return None
+
+    # Finance Manager Helper
+    async def get_finance_manager(self) -> Optional[Dict]:
+        """Get finance manager for approvals"""
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow("""
+                SELECT emp_id, emp_name, emp_email_id 
+                FROM staff_directory 
+                WHERE role ILIKE '%finance%' AND is_active = 'Y'
+                LIMIT 1
+            """)
+            return dict(row) if row else None
+        
+    def _convert_date_for_db(self, date_input):
+        """Helper to convert string dates to date objects for database"""
+        if isinstance(date_input, str):
+            return datetime.strptime(date_input, '%Y-%m-%d').date()
+        return date_input
 # Global database instance
 db = Database()
 

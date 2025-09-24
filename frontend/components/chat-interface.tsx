@@ -42,7 +42,9 @@ import {
   Clock,
   Pause,
   Plus,
-  MessageSquare
+  MessageSquare,
+  ShoppingCart,  // For PO workflow icon
+  Package
 } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 
@@ -72,6 +74,18 @@ interface SQLChatResponse {
     reference_results: number
   }
   context_sources?: string[]           // New field
+  po_workflow?: {
+    workflow_id: string
+    order_date: string
+    extracted_date: string
+    status: string
+  }
+  po_suggestion?: {
+    suggest_po: boolean
+    reason: string
+    suggestion_text: string
+  }
+  po_workflow_started?: boolean 
 }
 
 interface Message {
@@ -91,6 +105,9 @@ interface Message {
   total_rows?: number
   retrieval_stats?: SQLChatResponse['retrieval_stats']  // New field
   context_sources?: string[]           // New field
+  po_workflow?: SQLChatResponse['po_workflow']
+  po_suggestion?: SQLChatResponse['po_suggestion']
+  po_workflow_started?: boolean 
 }
 
 interface Project {
@@ -605,7 +622,64 @@ const MessageBubble = ({
   }
 
   const messageWidthClass = getMessageWidth(message.content, message.sender)
-  
+  // **NEW: PO Workflow Status Component**
+  const POWorkflowDisplay = ({ 
+    po_workflow, 
+    po_suggestion 
+  }: {
+    po_workflow?: SQLChatResponse['po_workflow']
+    po_suggestion?: SQLChatResponse['po_suggestion']
+  }) => {
+    if (!po_workflow && !po_suggestion) return null
+
+    return (
+      <div className="mt-3 space-y-2">
+        {/* PO Workflow Status */}
+        {po_workflow && (
+          <div className="border rounded bg-blue-50 dark:bg-blue-900/20">
+            <div className="p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-1">
+                  {po_workflow.status === 'initiated' ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                  ) : (
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                  )}
+                  <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                    Purchase Order Workflow
+                  </span>
+                </div>
+                <Badge variant="secondary" className="text-xs">
+                  {po_workflow.status}
+                </Badge>
+              </div>
+              
+              <div className="text-xs space-y-1 text-blue-800 dark:text-blue-200">
+                <div>🔄 Status: Processing material shortfalls and vendor selection...</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PO Suggestion */}
+        {po_suggestion?.suggest_po && (
+          <div className="border rounded bg-amber-50 dark:bg-amber-900/20 border-amber-200">
+            <div className="p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <span className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                  PO Suggestion
+                </span>
+              </div>
+              <div className="text-xs text-amber-800 dark:text-amber-200">
+                {po_suggestion.suggestion_text}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
   return (
     <div className={`flex gap-2 ${message.sender === "user" ? "justify-end" : "justify-start"}`}>
       {message.sender === "ai" && (
@@ -667,6 +741,10 @@ const MessageBubble = ({
                   // context_sources={message.context_sources}
                   // retrieval_stats={message.retrieval_stats}
                 />
+                <POWorkflowDisplay 
+                    po_workflow={message.po_workflow}
+                    po_suggestion={message.po_suggestion}
+                  />
                 </div>
               )}
             </div>
@@ -855,7 +933,12 @@ export function ChatInterface({
         setMessages([
           {
             id: "welcome",
-            content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". I can help you query your database using schema information, business rules, and documentation. What would you like to know?`,
+            content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". 
+                      I can help you:
+                      📊 Query your database using natural language
+                      📋 Generate purchase orders by saying "generate PO for today"
+                      💡 Analyze data and suggest PO creation when shortfalls are found
+                      What would you like to do?`,
             sender: "ai",
             timestamp: new Date(),
             intent: isEmbeddingProcessing ? "processing_status" : "welcome"
@@ -993,7 +1076,7 @@ export function ChatInterface({
         throw new Error('No authentication token found. Please log in again.')
       }
 
-      const response = await fetch(`${API_BASE_URL}/chat/sql`, {
+      const response = await fetch(`${API_BASE_URL}/chat/query`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -1039,7 +1122,10 @@ export function ChatInterface({
         sample_data: data.sample_data,
         total_rows: data.total_rows,
         retrieval_stats: data.retrieval_stats,                   // New
-        context_sources: data.context_sources                    // New
+        context_sources: data.context_sources,                    // New
+        po_workflow: data.po_workflow,
+        po_suggestion: data.po_suggestion,
+        po_workflow_started: data.po_workflow_started
       }
 
       setMessages((prev) => [...prev, aiResponse])
@@ -1177,7 +1263,7 @@ export function ChatInterface({
               placeholder={
                 isEmbeddingProcessing 
                   ? `Embeddings processing... Ask about "${selectedProject.name}" (limited responses)`
-                  : `Ask about "${selectedProject.name}" data...`
+                  : `Ask about "${selectedProject.name}" or say "generate PO for today"`
               }
               className={`flex-1 text-sm ${isEmbeddingProcessing ? 'border-amber-300 bg-amber-50/30' : ''}`}
               disabled={isTyping}
@@ -1212,7 +1298,7 @@ export function ChatInterface({
             <span className="hidden sm:inline">
               {isEmbeddingProcessing 
                 ? "Limited responses during processing • Press Enter to send"
-                : "Enhanced with schema, rules & docs • Press Enter to send"
+                : "Enhanced with schema, rules & docs • Try 'generate PO for today' • Press Enter to send"
               }
             </span>
           </div>
