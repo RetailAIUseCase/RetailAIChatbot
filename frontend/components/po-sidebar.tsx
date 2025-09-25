@@ -764,7 +764,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
         {/* Header */}
         <div className="p-3 border-b">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-medium text-sm">Generated Purchase Orders</h3>
+            <h3 className="font-medium text-sm">Generated Documents</h3>
             <div className="flex items-center gap-2">
               <Tooltip>
                 <TooltipTrigger asChild>

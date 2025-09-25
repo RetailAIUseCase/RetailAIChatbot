@@ -742,7 +742,7 @@ export default function DashboardPage() {
       {/* Header */}
       <header className="border-b border-border bg-card px-4 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-foreground">AI Document Intelligence</h1>
+          <h1 className="text-xl font-semibold text-foreground">Supply Chain Intelligence Assistant</h1>
           {selectedProject && (
             <Badge variant="secondary" className="hidden md:inline-flex">
               {selectedProject.name}
