@@ -52,7 +52,7 @@ export default function LoginPage() {
 
   // API base URL
   const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_URL || "https://retail-ai-chatbot.onrender.com";
+    process.env.NEXT_PUBLIC_API_BASE_URL || "https://retail-ai-chatbot.onrender.com";
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
