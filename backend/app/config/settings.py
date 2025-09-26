@@ -1,5 +1,5 @@
-import os
-from typing import Optional
+from typing import List, Optional
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 load_dotenv()
@@ -7,70 +7,76 @@ load_dotenv()
 class Settings(BaseSettings):
     
     # Database configuration
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
-    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-    SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
+    DATABASE_URL: str
+    SUPABASE_URL: str
+    SUPABASE_SERVICE_ROLE_KEY: str
+    SUPABASE_ANON_KEY: str
 
     # OpenAI configuration
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_KEY: str
 
     # LLM configuration
-    SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.3"))
-    TOP_K: int = int(os.getenv("TOP_K", "6"))
-    EMBED_MODEL: str = os.getenv("EMBED_MODEL", "text-embedding-3-small")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
-    NLP_LLM_MODEL: str = os.getenv("NLP_LLM_MODEL", "gpt-4o")
-    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+    SIMILARITY_THRESHOLD: float
+    TOP_K: int
+    EMBED_MODEL: str 
+    LLM_MODEL: str
+    NLP_LLM_MODEL: str 
+    EMBEDDING_DIMENSIONS: int
 
     # Security
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
-    ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+    SECRET_KEY: str 
+    ALGORITHM: str 
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
     
     # CORS configuration
-    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://scia-chatbot.vercel.app")
+    FRONTEND_URL: str 
 
     # For production deployment (Railway/Vercel)
-    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
-    PORT: int = int(os.getenv("PORT", "8000"))
-    API_BASE_URL: str = os.getenv("API_BASE_URL", "http://localhost:8000")
+    ENVIRONMENT: str
+    PORT: int 
+    API_BASE_URL: str 
 
     # LLM Configuration
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    
+    OPENAI_API_KEY: Optional[str] 
+
     # File Storage
-    UPLOAD_DIR: str = "uploads"
-    MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
+    # UPLOAD_DIR: str = "uploads"
+    # MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB 
 
     # Purchase Order Settings
-    PO_APPROVAL_THRESHOLD: float = float(os.getenv("PO_APPROVAL_THRESHOLD", "50000.0"))
+    PO_APPROVAL_THRESHOLD: float 
 
-    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.example.com")
-    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
-    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "your-email@example.com")
-    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "your-email-password")
+    SMTP_SERVER: str 
+    SMTP_PORT: int 
+    SMTP_USERNAME: str 
+    SMTP_PASSWORD: str
     # SendGrid Configuration
-    SENDGRID_API_KEY: str = os.getenv("SENDGRID_API_KEY", "")
-    SENDGRID_FROM_EMAIL: str = os.getenv("SENDGRID_FROM_EMAIL", "noreply@yourcompany.com")
+    SENDGRID_API_KEY: str
+    SENDGRID_FROM_EMAIL: str 
 
     # Template IDs (you'll get these from SendGrid dashboard)
-    SENDGRID_PO_APPROVAL_TEMPLATE_ID: str = os.getenv("SENDGRID_PO_APPROVAL_TEMPLATE_ID", "")
-    SENDGRID_PO_VENDOR_TEMPLATE_ID: str = os.getenv("SENDGRID_PO_VENDOR_TEMPLATE_ID", "")
-    SENDGRID_PO_STATUS_TEMPLATE_ID: str = os.getenv("SENDGRID_PO_STATUS_TEMPLATE_ID", "")
+    SENDGRID_PO_APPROVAL_TEMPLATE_ID: str 
+    SENDGRID_PO_VENDOR_TEMPLATE_ID: str 
+    SENDGRID_PO_STATUS_TEMPLATE_ID: str
 
-    COMPANY_NAME: str = os.getenv("COMPANY_NAME", "Your Company Name")
-    COMPANY_ADDRESS: str = os.getenv("COMPANY_ADDRESS", "Your Company Address")
-    COMPANY_PHONE: str = os.getenv("COMPANY_PHONE", "Your Company Phone")
-    COMPANY_EMAIL: str = os.getenv("COMPANY_EMAIL", "Your Company Email")
-    COMPANY_WEBSITE: str = os.getenv("COMPANY_WEBSITE", "Your Company Website")
-    COMPANY_CONTACT_NAME: str = os.getenv("COMPANY_CONTACT_NAME", "Your Company Contact Name")
+    COMPANY_NAME: str 
+    COMPANY_ADDRESS: str 
+    COMPANY_PHONE: str 
+    COMPANY_EMAIL: str
+    COMPANY_WEBSITE: str 
+    COMPANY_CONTACT_NAME: str
 
     # CORS
-    ALLOWED_ORIGINS: list = [
-        "http://localhost:3000",
-        os.getenv("FRONTEND_URL", "https://scia-chatbot.vercel.app")
-    ]
+    ALLOWED_ORIGINS: List[str] = []
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    def set_allowed_origins(cls, v, info: ValidationInfo):
+        frontend_url = info.data.get("FRONTEND_URL", "https://scia-chatbot.vercel.app")
+        return [
+            "http://localhost:3000",
+            frontend_url,
+        ]
+
     
     def validate_settings(self) -> bool:
         """Validate that required settings are present"""
