@@ -1,8 +1,8 @@
 from typing import List, Optional
 from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings
-from dotenv import load_dotenv
-load_dotenv()
+# from dotenv import load_dotenv
+# load_dotenv()
 
 class Settings(BaseSettings):
     
@@ -35,9 +35,6 @@ class Settings(BaseSettings):
     ENVIRONMENT: str
     PORT: int 
     API_BASE_URL: str 
-
-    # LLM Configuration
-    OPENAI_API_KEY: Optional[str] 
 
     # File Storage
     # UPLOAD_DIR: str = "uploads"
@@ -90,5 +87,6 @@ class Settings(BaseSettings):
     
     class Config:
         env_file = ".env"
+        env_file_encoding = 'utf-8'
 
 settings = Settings()
