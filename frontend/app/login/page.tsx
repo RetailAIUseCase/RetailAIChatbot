@@ -14,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Eye, EyeOff} from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Header } from "@/components/ui/header";
 import Image from "next/image";
@@ -22,7 +22,7 @@ import bgImage5 from "@/public/loginbackgroundv5.jpg";
 import smarterIcon from "@/public/smarter.png";
 import connectedIcon from "@/public/connected.png";
 import supplyIcon from "@/public/supply.png";
-
+import alertIcon from "@/public/alerts.png";
 
 // Add this interface for the login response
 interface LoginResponse {
@@ -237,50 +237,80 @@ export default function LoginPage() {
 
             <div className="space-y-6">
               <div className="flex items-start gap-4">
-                <div className="bg-primary/10 p-3 rounded-lg">
-                  {/* <Upload className="h-6 w-6 text-primary" /> */}
-                  <Image src={smarterIcon.src} alt="smarter-icon" width="40" height="40" />
+                <div className="bg-primary/10 rounded-lg">
+                  <Image
+                    src={smarterIcon.src}
+                    alt="smarter-icon"
+                    width="40"
+                    height="40"
+                  />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-background">
+                  <h3 className="font-semibold text-background text-sm">
                     Faster, Smarter Decision-Making
                   </h3>
-                  <p className="text-background">
+                  <p className="text-background text-sm">
                     Replaces manual searches and cross-system queries with
-                    prompt-driven workflows (prompt engineering)
+                    prompt-driven workflows
                   </p>
                 </div>
               </div>
 
               <div className="flex items-start gap-4">
-                <div className="bg-primary/10 p-3 rounded-lg">
-                  {/* <MessageSquare className="h-6 w-6 text-primary" /> */}
-                  <Image src={supplyIcon.src} alt="connected-icon" width="40" height="40" />
+                <div className="bg-primary/10 rounded-lg">
+                  <Image
+                    src={supplyIcon.src}
+                    alt="connected-icon"
+                    width="40"
+                    height="40"
+                  />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-background">
+                  <h3 className="font-semibold text-background text-sm">
                     Unified View of Supply Chain Data
                   </h3>
-                  <p className="text-background">
+                  <p className="text-background text-sm">
                     Connects ERP, WMS, TMS, MES and even spreadsheets into one
-                    queryable chat surface (no more system-hopping)
+                    queryable chat without system-hopping
                   </p>
                 </div>
               </div>
 
               <div className="flex items-start gap-4">
-                <div className="bg-primary/10 p-3 rounded-lg">
-                  {/* <FileText className="h-6 w-6 text-primary" /> */}
-                  <Image src={connectedIcon.src} alt="supply-icon" width="40" height="40" />
+                <div className="bg-primary/10 rounded-lg">
+                  <Image
+                    src={connectedIcon.src}
+                    alt="supply-icon"
+                    width="40"
+                    height="40"
+                  />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-background">
+                  <h3 className="font-semibold text-background text-sm">
                     Semi Autonomous Connected journey
                   </h3>
-                  <p className="text-background">
+                  <p className="text-background text-sm">
                     Orchestrates all steps of supply chain, automating within
-                    guardrail, and escalating when needed matters (human-in-loop
-                    Design)
+                    guardrail, and escalating when needed
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-4">
+                <div className="bg-primary/10 rounded-lg">
+                  <Image
+                    src={alertIcon.src}
+                    alt="supply-icon"
+                    width="40"
+                    height="40"
+                  />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-background text-sm">
+                    Natural-Language Alerts
+                  </h3>
+                  <p className="text-background text-sm">
+                    Create alert rules by typing a prompt and get notified, no
+                    forms or dashboards
                   </p>
                 </div>
               </div>
