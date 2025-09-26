@@ -1,30 +1,37 @@
-"use client"
+"use client";
 
-import type React from "react"
-import { useState, useRef, useEffect, useCallback } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Separator } from "@/components/ui/separator"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import type React from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu"
-import { 
-  Send, 
-  Bot, 
-  User, 
-  FileText, 
-  Copy, 
-  ThumbsUp, 
-  ThumbsDown, 
+} from "@/components/ui/dropdown-menu";
+import {
+  Send,
+  Bot,
+  User,
+  FileText,
+  Copy,
+  ThumbsUp,
+  ThumbsDown,
   Database,
   Code,
   AlertCircle,
@@ -35,117 +42,117 @@ import {
   EyeOff,
   ChevronDown,
   ChevronUp,
-  BookOpen,        // New: for references
-  Building2,       // New: for business rules
-  Info,           // New: for context info
-  Activity,        // New: for retrieval stats
+  BookOpen, // New: for references
+  Building2, // New: for business rules
+  Info, // New: for context info
+  Activity, // New: for retrieval stats
   Clock,
   Pause,
   Plus,
   MessageSquare,
-  ShoppingCart,  // For PO workflow icon
-  Package
-} from "lucide-react"
-import { toast } from "@/components/ui/use-toast"
+  ShoppingCart, // For PO workflow icon
+  Package,
+} from "lucide-react";
+import { toast } from "@/components/ui/use-toast";
 
 // **ENHANCED: Updated interfaces for new API response**
 interface SQLChatResponse {
-  conversation_id: string
-  intent: string
-  sql_query?: string
-  explanation: string
-  tables_used?: string[]
-  business_rules_applied?: string[]    // New field
-  reference_context?: string[]         // New field
+  conversation_id: string;
+  intent: string;
+  sql_query?: string;
+  explanation: string;
+  tables_used?: string[];
+  business_rules_applied?: string[]; // New field
+  reference_context?: string[]; // New field
   query_result?: {
-    success: boolean
-    data?: Array<Record<string, any>>
-    row_count?: number
-    error?: string
-  }
-  final_answer: string
-  confidence: number
-  sample_data?: Array<Record<string, any>>
-  total_rows?: number
-  retrieval_stats?: {                  // New field
-    total_results: number
-    metadata_results: number
-    business_logic_results: number
-    reference_results: number
-  }
-  context_sources?: string[]           // New field
+    success: boolean;
+    data?: Array<Record<string, any>>;
+    row_count?: number;
+    error?: string;
+  };
+  final_answer: string;
+  confidence: number;
+  sample_data?: Array<Record<string, any>>;
+  total_rows?: number;
+  retrieval_stats?: {
+    // New field
+    total_results: number;
+    metadata_results: number;
+    business_logic_results: number;
+    reference_results: number;
+  };
+  context_sources?: string[]; // New field
   po_workflow?: {
-    workflow_id: string
-    order_date: string
-    extracted_date: string
-    status: string
-  }
+    workflow_id: string;
+    order_date: string;
+    extracted_date: string;
+    status: string;
+  };
   po_suggestion?: {
-    suggest_po: boolean
-    reason: string
-    suggestion_text: string
-  }
-  po_workflow_started?: boolean 
+    suggest_po: boolean;
+    reason: string;
+    suggestion_text: string;
+  };
+  po_workflow_started?: boolean;
 }
 
 interface Message {
-  id: string
-  content: string
-  sender: "user" | "ai"
-  timestamp: Date
-  relatedDocuments?: string[]
-  sqlQuery?: string
-  queryResult?: SQLChatResponse['query_result']
-  intent?: string
-  confidence?: number
-  tables_used?: string[]
-  business_rules_applied?: string[]    // New field
-  reference_context?: string[]         // New field
-  sample_data?: Array<Record<string, any>>
-  total_rows?: number
-  retrieval_stats?: SQLChatResponse['retrieval_stats']  // New field
-  context_sources?: string[]           // New field
-  po_workflow?: SQLChatResponse['po_workflow']
-  po_suggestion?: SQLChatResponse['po_suggestion']
-  po_workflow_started?: boolean 
+  id: string;
+  content: string;
+  sender: "user" | "ai";
+  timestamp: Date;
+  relatedDocuments?: string[];
+  sqlQuery?: string;
+  queryResult?: SQLChatResponse["query_result"];
+  intent?: string;
+  confidence?: number;
+  tables_used?: string[];
+  business_rules_applied?: string[]; // New field
+  reference_context?: string[]; // New field
+  sample_data?: Array<Record<string, any>>;
+  total_rows?: number;
+  retrieval_stats?: SQLChatResponse["retrieval_stats"]; // New field
+  context_sources?: string[]; // New field
+  po_workflow?: SQLChatResponse["po_workflow"];
+  po_suggestion?: SQLChatResponse["po_suggestion"];
+  po_workflow_started?: boolean;
 }
 
 interface Project {
-  id: string
-  name: string
-  description: string
-  created_at: string
-  updated_at: string
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
   documentCounts?: {
-    metadata: number
-    businesslogic: number
-    references: number
-  }
+    metadata: number;
+    businesslogic: number;
+    references: number;
+  };
 }
 
 interface Conversation {
-  id: string
-  title: string
-  project_id: string
-  created_at: string
-  updated_at: string
-  message_count: number
+  id: string;
+  title: string;
+  project_id: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
 }
 
 // Add props for processing state
 interface ChatInterfaceProps {
-  selectedProject: Project | null
-  isEmbeddingProcessing?: boolean
-  conversations: Conversation[]
-  currentConversationId: string | null
-  onConversationChange: (conversationId: string | null) => void
-  onNewConversation: () => void
-  
+  selectedProject: Project | null;
+  isEmbeddingProcessing?: boolean;
+  conversations: Conversation[];
+  currentConversationId: string | null;
+  onConversationChange: (conversationId: string | null) => void;
+  onNewConversation: () => void;
 }
 // **NEW: Context Sources Display Component**
-// const ContextSourcesDisplay = ({ 
-//   context_sources, 
-//   retrieval_stats 
+// const ContextSourcesDisplay = ({
+//   context_sources,
+//   retrieval_stats
 // }: {
 //   context_sources?: string[]
 //   retrieval_stats?: SQLChatResponse['retrieval_stats']
@@ -211,14 +218,14 @@ interface ChatInterfaceProps {
 // }
 
 // **ENHANCED: Business Rules & References Display Component**
-// const BusinessContextDisplay = ({ 
-//   business_rules_applied, 
-//   reference_context 
+// const BusinessContextDisplay = ({
+//   business_rules_applied,
+//   reference_context
 // }: {
 //   business_rules_applied?: string[]
 //   reference_context?: string[]
 // }) => {
-//   if ((!business_rules_applied || business_rules_applied.length === 0) && 
+//   if ((!business_rules_applied || business_rules_applied.length === 0) &&
 //       (!reference_context || reference_context.length === 0)) return null
 
 //   return (
@@ -263,79 +270,83 @@ interface ChatInterfaceProps {
 // }
 
 // **ENHANCED: SQL Result Display Component with new context info**
-const SQLResultDisplay = ({ 
-  sqlQuery, 
-  queryResult, 
+const SQLResultDisplay = ({
+  sqlQuery,
+  queryResult,
   data,
-  sample_data, 
+  sample_data,
   total_rows,
   tables_used,
   business_rules_applied,
   reference_context,
   // context_sources,
-  retrieval_stats
+  retrieval_stats,
 }: {
-  sqlQuery?: string
-  queryResult?: SQLChatResponse['query_result']
-  data?: Array<Record<string, any>>
-  sample_data?: Array<Record<string, any>>
-  total_rows?: number
-  tables_used?: string[]
-  business_rules_applied?: string[]
-  reference_context?: string[]
+  sqlQuery?: string;
+  queryResult?: SQLChatResponse["query_result"];
+  data?: Array<Record<string, any>>;
+  sample_data?: Array<Record<string, any>>;
+  total_rows?: number;
+  tables_used?: string[];
+  business_rules_applied?: string[];
+  reference_context?: string[];
   // context_sources?: string[]
-  retrieval_stats?: SQLChatResponse['retrieval_stats']
+  retrieval_stats?: SQLChatResponse["retrieval_stats"];
 }) => {
-  const [showSQL, setShowSQL] = useState(false)
-  const [showData, setShowData] = useState(false)
-  const [showContext, setShowContext] = useState(false)
+  const [showSQL, setShowSQL] = useState(false);
+  const [showData, setShowData] = useState(false);
+  const [showContext, setShowContext] = useState(false);
 
   const copySQL = () => {
     if (sqlQuery) {
-      navigator.clipboard.writeText(sqlQuery)
+      navigator.clipboard.writeText(sqlQuery);
       toast({
         title: "SQL Copied!",
         description: "SQL query copied to clipboard",
         duration: 2000,
-      })
+      });
     }
-  }
+  };
 
   const downloadCSV = () => {
-    const exportData = (data && data.length > 0) ? data : sample_data
+    const exportData = data && data.length > 0 ? data : sample_data;
 
     if (exportData && exportData.length > 0) {
-      const headers = Object.keys(exportData[0])
+      const headers = Object.keys(exportData[0]);
       const csvContent = [
-        headers.join(','),
-        ...exportData.map(row => 
-          headers.map(header => {
-            const value = row[header]
-            return typeof value === 'string' ? `"${value.replace(/"/g, '""')}"` : value
-          }).join(',')
-        )
-      ].join('\n')
-      
-      const blob = new Blob([csvContent], { type: 'text/csv' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'query_results.csv'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      
+        headers.join(","),
+        ...exportData.map((row) =>
+          headers
+            .map((header) => {
+              const value = row[header];
+              return typeof value === "string"
+                ? `"${value.replace(/"/g, '""')}"`
+                : value;
+            })
+            .join(",")
+        ),
+      ].join("\n");
+
+      const blob = new Blob([csvContent], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "query_results.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
       toast({
         title: "Downloaded!",
         description: "Query results downloaded as CSV",
         duration: 2000,
-      })
+      });
     }
-  }
+  };
 
   // if (!sqlQuery && !sample_data && !context_sources) return null
-  if (!sqlQuery && !sample_data) return null
+  if (!sqlQuery && !sample_data) return null;
 
   return (
     <div className="mt-3 space-y-2">
@@ -347,11 +358,16 @@ const SQLResultDisplay = ({
           ) : (
             <AlertCircle className="h-3 w-3 text-red-500" />
           )}
-          <span className={`font-medium ${queryResult.success ? 'text-green-700' : 'text-red-700'}`}>
-            {queryResult.success ? 'Success' : 'Failed'}
+          <span
+            className={`font-medium ${queryResult.success ? "text-green-700" : "text-red-700"
+              }`}
+          >
+            {queryResult.success ? "Success" : "Failed"}
           </span>
           {queryResult.success && total_rows !== undefined && (
-            <Badge variant="secondary" className="text-xs py-0 px-1 h-4">{total_rows} rows</Badge>
+            <Badge variant="secondary" className="text-xs py-0 px-1 h-4">
+              {total_rows} rows
+            </Badge>
           )}
         </div>
       )}
@@ -368,7 +384,11 @@ const SQLResultDisplay = ({
           <Database className="h-3 w-3 text-primary" />
           <span className="text-xs text-muted-foreground">Tables:</span>
           {tables_used.map((table, index) => (
-            <Badge key={index} variant="outline" className="text-xs py-0 px-1 h-4 font-mono">
+            <Badge
+              key={index}
+              variant="outline"
+              className="text-xs py-0 px-1 h-4 font-mono"
+            >
               {table}
             </Badge>
           ))}
@@ -396,8 +416,8 @@ const SQLResultDisplay = ({
           </div>
           {showContext && (
             <div className="px-2 pb-2 space-y-2"> */}
-              {/* Retrieval Statistics */}
-              {/* {retrieval_stats && (
+      {/* Retrieval Statistics */}
+      {/* {retrieval_stats && (
                 <div className="text-xs space-y-1">
                   <div className="font-medium text-muted-foreground">Retrieval Statistics:</div>
                   <div className="grid grid-cols-2 gap-1 text-xs">
@@ -408,9 +428,9 @@ const SQLResultDisplay = ({
                   </div>
                 </div>
               )} */}
-              
-              {/* Business Rules Details */}
-              {/* {business_rules_applied && business_rules_applied.length > 0 && (
+
+      {/* Business Rules Details */}
+      {/* {business_rules_applied && business_rules_applied.length > 0 && (
                 <div className="text-xs space-y-1">
                   <div className="font-medium text-muted-foreground">Business Rules Applied:</div>
                   <div className="space-y-1 max-h-20 overflow-y-auto">
@@ -423,8 +443,8 @@ const SQLResultDisplay = ({
                 </div>
               )}
                */}
-              {/* Reference Context Details */}
-              {/* {reference_context && reference_context.length > 0 && (
+      {/* Reference Context Details */}
+      {/* {reference_context && reference_context.length > 0 && (
                 <div className="text-xs space-y-1">
                   <div className="font-medium text-muted-foreground">Reference Context:</div>
                   <div className="space-y-1 max-h-20 overflow-y-auto">
@@ -444,7 +464,7 @@ const SQLResultDisplay = ({
       {/* SQL Query Collapsible - Compact */}
       {sqlQuery && (
         <div className="border rounded">
-          <div 
+          <div
             className="flex items-center justify-between p-2 cursor-pointer hover:bg-muted/50 transition-colors"
             onClick={() => setShowSQL(!showSQL)}
           >
@@ -457,14 +477,18 @@ const SQLResultDisplay = ({
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
-                  e.stopPropagation()
-                  copySQL()
+                  e.stopPropagation();
+                  copySQL();
                 }}
                 className="h-5 w-5 p-0"
               >
                 <Copy className="h-2 w-2" />
               </Button>
-              {showSQL ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {showSQL ? (
+                <ChevronUp className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
             </div>
           </div>
           {showSQL && (
@@ -472,7 +496,9 @@ const SQLResultDisplay = ({
               {/* <pre className="text-xs bg-muted/50 p-2 rounded border overflow-x-auto font-mono max-h-32 overflow-y-auto">
                 <code>{sqlQuery}</code> */}
               <pre className="text-xs bg-muted/50 p-3 rounded border overflow-x-auto font-mono max-h-40 overflow-y-auto whitespace-pre-wrap break-words">
-                <code className="text-foreground whitespace-pre-wrap">{sqlQuery}</code>
+                <code className="text-foreground whitespace-pre-wrap">
+                  {sqlQuery}
+                </code>
               </pre>
             </div>
           )}
@@ -483,14 +509,16 @@ const SQLResultDisplay = ({
       {queryResult?.error && (
         <Alert variant="destructive" className="py-2">
           <AlertCircle className="h-3 w-3" />
-          <AlertDescription className="text-xs">{queryResult.error}</AlertDescription>
+          <AlertDescription className="text-xs">
+            {queryResult.error}
+          </AlertDescription>
         </Alert>
       )}
 
       {/* Data Table Display - Compact */}
       {sample_data && sample_data.length > 0 && (
         <div className="border rounded">
-          <div 
+          <div
             className="flex items-center justify-between p-2 cursor-pointer hover:bg-muted/50 transition-colors"
             onClick={() => setShowData(!showData)}
           >
@@ -508,14 +536,18 @@ const SQLResultDisplay = ({
                 variant="ghost"
                 size="sm"
                 onClick={(e) => {
-                  e.stopPropagation()
-                  downloadCSV()
+                  e.stopPropagation();
+                  downloadCSV();
                 }}
                 className="h-5 w-5 p-0"
               >
                 <Download className="h-2 w-2" />
               </Button>
-              {showData ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {showData ? (
+                <ChevronUp className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
             </div>
           </div>
           {showData && (
@@ -526,7 +558,10 @@ const SQLResultDisplay = ({
                     <TableHeader className="sticky top-0 bg-muted">
                       <TableRow>
                         {Object.keys(sample_data[0]).map((header) => (
-                          <TableHead key={header} className="whitespace-nowrap text-xs font-medium py-1 px-2 h-6">
+                          <TableHead
+                            key={header}
+                            className="whitespace-nowrap text-xs font-medium py-1 px-2 h-6"
+                          >
                             {header}
                           </TableHead>
                         ))}
@@ -536,13 +571,15 @@ const SQLResultDisplay = ({
                       {sample_data.map((row, index) => (
                         <TableRow key={index} className="hover:bg-muted/30">
                           {Object.values(row).map((value, cellIndex) => (
-                            <TableCell key={cellIndex} className="text-xs font-mono py-1 px-2">
-                              {value !== null && value !== undefined 
-                                ? String(value).length > 50 
+                            <TableCell
+                              key={cellIndex}
+                              className="text-xs font-mono py-1 px-2"
+                            >
+                              {value !== null && value !== undefined
+                                ? String(value).length > 50
                                   ? `${String(value).substring(0, 50)}...`
                                   : String(value)
-                                : 'NULL'
-                              }
+                                : "NULL"}
                             </TableCell>
                           ))}
                         </TableRow>
@@ -563,74 +600,77 @@ const SQLResultDisplay = ({
         </div>
       )}
     </div>
-  )
-}
+  );
+};
 
 // Auto-scroll Hook (unchanged)
 const useChatScroll = (dep: any) => {
-  const ref = useRef<HTMLDivElement>(null)
-  
+  const ref = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (ref.current) {
-      ref.current.scrollTop = ref.current.scrollHeight
+      ref.current.scrollTop = ref.current.scrollHeight;
     }
-  }, [dep])
-  
-  return ref
-}
+  }, [dep]);
+
+  return ref;
+};
 
 // Utility functions (unchanged)
 const shouldShowIntent = (intent?: string): boolean => {
-  if (!intent) return false
-  
-  const words = intent.replace(/_/g, ' ').trim().split(/\s+/)
-  const meaningfulWords = words.filter(word => word.length > 2)
-  
-  return meaningfulWords.length > 2
-}
+  if (!intent) return false;
+
+  const words = intent.replace(/_/g, " ").trim().split(/\s+/);
+  const meaningfulWords = words.filter((word) => word.length > 2);
+
+  return meaningfulWords.length > 2;
+};
 
 const shouldShowConfidence = (confidence?: number): boolean => {
-  return confidence !== undefined && confidence >= 0.5
-}
+  return confidence !== undefined && confidence >= 0.5;
+};
 
 // **ENHANCED: Message Bubble Component with new context display**
-const MessageBubble = ({ 
-  message, 
-  onCopy, 
-  onFeedback 
-}: { 
-  message: Message
-  onCopy: (content: string) => void
-  onFeedback: (messageId: string, type: 'up' | 'down') => void
+const MessageBubble = ({
+  message,
+  onCopy,
+  onFeedback,
+}: {
+  message: Message;
+  onCopy: (content: string) => void;
+  onFeedback: (messageId: string, type: "up" | "down") => void;
 }) => {
   const formatTimestamp = (timestamp: Date) => {
-    return timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-  }
+    return timestamp.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
   const getMessageWidth = (content: string, sender: string) => {
-    const contentLength = content.length
-    
-    if (sender === "user") {
-      if (contentLength <= 15) return "w-fit max-w-[150px]"
-      if (contentLength <= 50) return "w-fit max-w-[250px]"
-      if (contentLength <= 100) return "w-fit max-w-[400px]"
-      return "max-w-[85%]"
-    } else {
-      if (contentLength <= 50) return "w-fit max-w-[300px]"
-      return "max-w-[85%]"
-    }
-  }
+    const contentLength = content.length;
 
-  const messageWidthClass = getMessageWidth(message.content, message.sender)
+    if (sender === "user") {
+      if (contentLength <= 15) return "w-fit max-w-[150px]";
+      if (contentLength <= 50) return "w-fit max-w-[250px]";
+      if (contentLength <= 100) return "w-fit max-w-[400px]";
+      return "max-w-[85%]";
+    } else {
+      if (contentLength <= 50) return "w-fit max-w-[300px]";
+      return "max-w-[85%]";
+    }
+  };
+
+  const messageWidthClass = getMessageWidth(message.content, message.sender);
   // **NEW: PO Workflow Status Component**
-  const POWorkflowDisplay = ({ 
-    po_workflow, 
-    po_suggestion 
+  const POWorkflowDisplay = ({
+    po_workflow,
+    po_suggestion,
   }: {
-    po_workflow?: SQLChatResponse['po_workflow']
-    po_suggestion?: SQLChatResponse['po_suggestion']
+    po_workflow?: SQLChatResponse["po_workflow"];
+    po_suggestion?: SQLChatResponse["po_suggestion"];
   }) => {
-    if (!po_workflow && !po_suggestion) return null
+    if (!po_workflow && !po_suggestion) return null;
 
     return (
       <div className="mt-3 space-y-2">
@@ -640,7 +680,7 @@ const MessageBubble = ({
             <div className="p-3">
               <div className="flex items-center gap-2 mb-2">
                 <div className="flex items-center gap-1">
-                  {po_workflow.status === 'initiated' ? (
+                  {po_workflow.status === "initiated" ? (
                     <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
                   ) : (
                     <CheckCircle className="h-4 w-4 text-green-600" />
@@ -653,9 +693,12 @@ const MessageBubble = ({
                   {po_workflow.status}
                 </Badge>
               </div>
-              
+
               <div className="text-xs space-y-1 text-blue-800 dark:text-blue-200">
-                <div>🔄 Status: Processing material shortfalls and vendor selection...</div>
+                <div>
+                  🔄 Status: Processing material shortfalls and vendor
+                  selection...
+                </div>
               </div>
             </div>
           </div>
@@ -678,10 +721,13 @@ const MessageBubble = ({
           </div>
         )}
       </div>
-    )
-  }
+    );
+  };
   return (
-    <div className={`flex gap-2 ${message.sender === "user" ? "justify-end" : "justify-start"}`}>
+    <div
+      className={`flex gap-2 ${message.sender === "user" ? "justify-end" : "justify-start"
+        }`}
+    >
       {message.sender === "ai" && (
         <Avatar className="h-6 w-6 flex-shrink-0 mt-1">
           <AvatarFallback className="bg-primary text-primary-foreground text-xs">
@@ -690,16 +736,23 @@ const MessageBubble = ({
         </Avatar>
       )}
 
-      <div className={`flex flex-col gap-1 ${messageWidthClass} min-w-0 ${message.sender === "user" ? "items-end" : "items-start"}`}>
-        <Card className={`${
-          message.sender === "user" 
-            ? "bg-primary text-primary-foreground border-primary" 
-            : "bg-card border-border"
-        } shadow-sm overflow-hidden`} style={{maxWidth:'100%'}}>
+      <div
+        className={`flex flex-col gap-1 ${messageWidthClass} min-w-0 ${message.sender === "user" ? "items-end" : "items-start"
+          }`}
+      >
+        <Card
+          className={`${message.sender === "user"
+              ? "bg-primary text-primary-foreground border-primary"
+              : "bg-card border-border"
+            } shadow-sm overflow-hidden`}
+          style={{ maxWidth: "100%" }}
+        >
           <CardContent className="px-3 py-2 overflow-hidden">
             <div className="space-y-1 overflow-hidden">
-              <p className="text-sm leading-5 whitespace-pre-wrap break-words">{message.content}</p>
-              
+              <p className="text-sm leading-5 whitespace-pre-wrap break-words">
+                {message.content}
+              </p>
+
               {/* Enhanced Intent and Confidence Display */}
               {/* {message.sender === "ai" && (shouldShowIntent(message.intent) || shouldShowConfidence(message.confidence)) && (
                 <div className="flex items-center gap-1 pt-1 border-t border-border/20">
@@ -715,33 +768,35 @@ const MessageBubble = ({
                   )}
                 </div>
               )} */}
-              {message.sender === "ai" && (shouldShowIntent(message.intent)) && (
+              {message.sender === "ai" && shouldShowIntent(message.intent) && (
                 <div className="flex items-center gap-1 pt-1 border-t border-border/20 min-w-0">
                   {shouldShowIntent(message.intent) && (
-                    <Badge variant="outline" className="text-xs py-1 px-2 max-w-full whitespace-normal break-words flex-shrink min-w-0 h-auto leading-tight">
-                      {message.intent?.replace(/_/g, ' ')}
+                    <Badge
+                      variant="outline"
+                      className="text-xs py-1 px-2 max-w-full whitespace-normal break-words flex-shrink min-w-0 h-auto leading-tight"
+                    >
+                      {message.intent?.replace(/_/g, " ")}
                     </Badge>
                   )}
                 </div>
               )}
 
-
               {/* Enhanced SQL Result Display */}
               {message.sender === "ai" && (
                 <div className="overflow-hidden max-w-full">
-                <SQLResultDisplay
-                  sqlQuery={message.sqlQuery}
-                  queryResult={message.queryResult}
-                  data={message.queryResult?.data}
-                  sample_data={message.sample_data}
-                  total_rows={message.total_rows}
-                  tables_used={message.tables_used}
-                  business_rules_applied={message.business_rules_applied}
-                  reference_context={message.reference_context}
+                  <SQLResultDisplay
+                    sqlQuery={message.sqlQuery}
+                    queryResult={message.queryResult}
+                    data={message.queryResult?.data}
+                    sample_data={message.sample_data}
+                    total_rows={message.total_rows}
+                    tables_used={message.tables_used}
+                    business_rules_applied={message.business_rules_applied}
+                    reference_context={message.reference_context}
                   // context_sources={message.context_sources}
                   // retrieval_stats={message.retrieval_stats}
-                />
-                <POWorkflowDisplay 
+                  />
+                  <POWorkflowDisplay
                     po_workflow={message.po_workflow}
                     po_suggestion={message.po_suggestion}
                   />
@@ -754,7 +809,7 @@ const MessageBubble = ({
         {/* Message Actions - Compact */}
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
           <span>{formatTimestamp(message.timestamp)}</span>
-          
+
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
@@ -766,19 +821,19 @@ const MessageBubble = ({
             </Button>
             {message.sender === "ai" && (
               <>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className="h-4 w-4 p-0 hover:bg-muted"
-                  onClick={() => onFeedback(message.id, 'up')}
+                  onClick={() => onFeedback(message.id, "up")}
                 >
                   <ThumbsUp className="h-2 w-2" />
                 </Button>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className="h-4 w-4 p-0 hover:bg-muted"
-                  onClick={() => onFeedback(message.id, 'down')}
+                  onClick={() => onFeedback(message.id, "down")}
                 >
                   <ThumbsDown className="h-2 w-2" />
                 </Button>
@@ -796,8 +851,8 @@ const MessageBubble = ({
         </Avatar>
       )}
     </div>
-  )
-}
+  );
+};
 
 // **NEW: Embedding Processing Banner Component**
 // const EmbeddingProcessingBanner = () => {
@@ -819,7 +874,7 @@ const MessageBubble = ({
 //               </Badge>
 //             </div>
 //             <p className="text-xs text-amber-700">
-//               Documents are being processed to enhance search capabilities. 
+//               Documents are being processed to enhance search capabilities.
 //               Chat functionality is limited until processing completes.
 //             </p>
 //           </div>
@@ -832,11 +887,11 @@ const MessageBubble = ({
 //   )
 // }
 // Add this component above your ChatInterface component
-// const ConversationSelector = ({ 
-//   conversations, 
-//   currentConversationId, 
-//   onConversationChange, 
-//   onNewConversation 
+// const ConversationSelector = ({
+//   conversations,
+//   currentConversationId,
+//   onConversationChange,
+//   onNewConversation
 // }: {
 //   conversations: Conversation[]
 //   currentConversationId: string | null
@@ -856,7 +911,7 @@ const MessageBubble = ({
 //             <DropdownMenuTrigger asChild>
 //               <Button variant="outline" size="sm" className="flex-1 justify-start">
 //                 <MessageSquare className="h-4 w-4 mr-2" />
-//                 {currentConversationId ? 
+//                 {currentConversationId ?
 //                   conversations.find(c => c.id === currentConversationId)?.title?.slice(0, 40) + "..." || "Current Chat"
 //                   : "New Chat"
 //                 }
@@ -873,7 +928,7 @@ const MessageBubble = ({
 //                   <DropdownMenuSeparator />
 //                   <div className="max-h-60 overflow-y-auto">
 //                     {conversations.map(conv => (
-//                       <DropdownMenuItem 
+//                       <DropdownMenuItem
 //                         key={conv.id}
 //                         onClick={() => onConversationChange(conv.id)}
 //                         className={currentConversationId === conv.id ? "bg-accent" : ""}
@@ -893,7 +948,7 @@ const MessageBubble = ({
 //               )}
 //             </DropdownMenuContent>
 //           </DropdownMenu>
-          
+
 //           <Button variant="outline" size="sm" onClick={onNewConversation}>
 //             <Plus className="h-4 w-4" />
 //           </Button>
@@ -903,30 +958,32 @@ const MessageBubble = ({
 //   )
 // }
 
-
 // **ENHANCED: Main ChatInterface Component with updated API call**
-export function ChatInterface({ 
-  selectedProject, 
-  isEmbeddingProcessing = false, 
+export function ChatInterface({
+  selectedProject,
+  isEmbeddingProcessing = false,
   conversations,
   currentConversationId,
   onConversationChange,
-  onNewConversation}: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<Message[]>([])
-  const [message, setMessage] = useState("")
-  const [isTyping, setIsTyping] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  
+  onNewConversation,
+}: ChatInterfaceProps) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [message, setMessage] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   // Auto-scroll to bottom when new messages arrive
-  const messagesEndRef = useChatScroll(messages)
-  
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "https://retail-ai-chatbot.onrender.com"
+  const messagesEndRef = useChatScroll(messages);
+
+  const API_BASE_URL =
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "https://retail-ai-chatbot.onrender.com";
 
   // Initialize welcome message
   useEffect(() => {
     if (currentConversationId) {
-      loadConversationMessages(currentConversationId)
+      loadConversationMessages(currentConversationId);
     } else {
       // Clear messages for new chat or show welcome message
       if (selectedProject?.id) {
@@ -941,75 +998,83 @@ export function ChatInterface({
                       What would you like to do?`,
             sender: "ai",
             timestamp: new Date(),
-            intent: isEmbeddingProcessing ? "processing_status" : "welcome"
+            intent: isEmbeddingProcessing ? "processing_status" : "welcome",
           },
-        ])
+        ]);
       } else {
-        setMessages([])
+        setMessages([]);
       }
     }
-  }, [currentConversationId, selectedProject?.id, isEmbeddingProcessing])
+  }, [currentConversationId, selectedProject?.id, isEmbeddingProcessing]);
 
   // ADD: Function to load conversation messages
   const loadConversationMessages = async (conversationId: string) => {
     try {
-      const token = localStorage.getItem('access_token')
-      const response = await fetch(`${API_BASE_URL}/chat/conversation/${conversationId}/messages`, {
-        headers: { 'Authorization': `Bearer ${token}`}
-      })
-      
-      if (response.ok) {
-        const data = await response.json()
-        if (!data.messages || data.messages.length === 0) {
-        // Show welcome message for empty conversations
-        if (selectedProject?.id) {
-          setMessages([
-            {
-              id: "welcome",
-              content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". I can help you query your database using schema information, business rules, and documentation. What would you like to know?`,
-              sender: "ai",
-              timestamp: new Date(),
-              intent: isEmbeddingProcessing ? "processing_status" : "welcome"
-            },
-          ])
-        } else {
-          setMessages([])
+      const token = localStorage.getItem("access_token");
+      const response = await fetch(
+        `${API_BASE_URL}/chat/conversation/${conversationId}/messages`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
         }
-        return // Exit early for empty conversations
-      }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (!data.messages || data.messages.length === 0) {
+          // Show welcome message for empty conversations
+          if (selectedProject?.id) {
+            setMessages([
+              {
+                id: "welcome",
+                content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". I can help you query your database using schema information, business rules, and documentation. What would you like to know?`,
+                sender: "ai",
+                timestamp: new Date(),
+                intent: isEmbeddingProcessing ? "processing_status" : "welcome",
+              },
+            ]);
+          } else {
+            setMessages([]);
+          }
+          return; // Exit early for empty conversations
+        }
 
         const formattedMessages = data.messages.map((msg: any) => {
-          let queryResult = msg.query_result
-          if (typeof queryResult === 'string') {
+          let queryResult = msg.query_result;
+          if (typeof queryResult === "string") {
             try {
-              queryResult = JSON.parse(queryResult)
+              queryResult = JSON.parse(queryResult);
             } catch (e) {
-              console.warn('Failed to parse query_result:', e)
-              queryResult = null
+              console.warn("Failed to parse query_result:", e);
+              queryResult = null;
             }
           }
-          return{
-          id: msg.id,
-          content: msg.content,
-          sender: msg.role === 'user' ? 'user' : 'ai',
-          timestamp: new Date(msg.created_at),
-          sqlQuery: msg.sql_query,
-          queryResult: queryResult,
-          intent: msg.intent,
-          tables_used: msg.tables_used,
-          business_rules_applied: msg.business_rules_applied,
-          reference_context: msg.reference_context,
-          sample_data: queryResult?.sample_data || queryResult?.data || msg.sample_data,
-          total_rows: queryResult?.rows_count || queryResult?.row_count || msg.rows_count,
-          retrieval_stats: msg.retrieval_stats,
-          context_sources: msg.context_sources
-        }})
-        setMessages(formattedMessages)
+          return {
+            id: msg.id,
+            content: msg.content,
+            sender: msg.role === "user" ? "user" : "ai",
+            timestamp: new Date(msg.created_at),
+            sqlQuery: msg.sql_query,
+            queryResult: queryResult,
+            intent: msg.intent,
+            tables_used: msg.tables_used,
+            business_rules_applied: msg.business_rules_applied,
+            reference_context: msg.reference_context,
+            sample_data:
+              queryResult?.sample_data || queryResult?.data || msg.sample_data,
+            total_rows:
+              queryResult?.rows_count ||
+              queryResult?.row_count ||
+              msg.rows_count,
+            retrieval_stats: msg.retrieval_stats,
+            context_sources: msg.context_sources,
+          };
+        });
+        setMessages(formattedMessages);
       }
     } catch (error) {
-      console.error('Error loading conversation messages:', error)
+      console.error("Error loading conversation messages:", error);
     }
-  }
+  };
 
   // useEffect(() => {
   //   if (isEmbeddingProcessing && messages.length > 0 && selectedProject) {
@@ -1021,7 +1086,7 @@ export function ChatInterface({
   //       timestamp: new Date(),
   //       intent: "processing_notification"
   //     }
-      
+
   //     setMessages(prev => {
   //       // Don't add duplicate processing messages
   //       const hasProcessingMessage = prev.some(msg => msg.intent === "processing_notification")
@@ -1032,77 +1097,84 @@ export function ChatInterface({
   //     })
   //   }
   // }, [isEmbeddingProcessing, selectedProject])
-  
+
   const handleCopy = useCallback((content: string) => {
-    navigator.clipboard.writeText(content)
+    navigator.clipboard.writeText(content);
     toast({
       title: "Copied!",
       description: "Message copied to clipboard",
       duration: 2000,
-    })
-  }, [])
+    });
+  }, []);
 
-  const handleFeedback = useCallback((messageId: string, type: 'up' | 'down') => {
-    toast({
-      title: "Feedback received",
-      description: `Thank you for your ${type === 'up' ? 'positive' : 'negative'} feedback!`,
-      duration: 2000,
-    })
-  }, [])
+  const handleFeedback = useCallback(
+    (messageId: string, type: "up" | "down") => {
+      toast({
+        title: "Feedback received",
+        description: `Thank you for your ${type === "up" ? "positive" : "negative"
+          } feedback!`,
+        duration: 2000,
+      });
+    },
+    []
+  );
 
   const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!message.trim() || !selectedProject || isTyping) return
+    e.preventDefault();
+    if (!message.trim() || !selectedProject || isTyping) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       content: message.trim(),
       sender: "user",
       timestamp: new Date(),
-    }
+    };
 
-    setMessages((prev) => [...prev, userMessage])
-    setMessage("")
-    setIsTyping(true)
-    setError(null)
+    setMessages((prev) => [...prev, userMessage]);
+    setMessage("");
+    setIsTyping(true);
+    setError(null);
     // **NEW: Add processing warning for better user experience**
     if (isEmbeddingProcessing) {
-      console.warn('Sending query while embeddings are processing - responses may be limited')
+      console.warn(
+        "Sending query while embeddings are processing - responses may be limited"
+      );
     }
     try {
-      const token = localStorage.getItem('access_token')
-      
+      const token = localStorage.getItem("access_token");
+
       if (!token) {
-        throw new Error('No authentication token found. Please log in again.')
+        throw new Error("No authentication token found. Please log in again.");
       }
 
       const response = await fetch(`${API_BASE_URL}/chat/query`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           message: userMessage.content,
           project_id: selectedProject.id,
           conversation_id: currentConversationId,
         }),
-      })
+      });
 
       if (!response.ok) {
         if (response.status === 401) {
-          throw new Error('Authentication expired. Please log in again.')
+          throw new Error("Authentication expired. Please log in again.");
         }
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || `Server error: ${response.status}`)
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server error: ${response.status}`);
       }
 
-      const data: SQLChatResponse = await response.json()
+      const data: SQLChatResponse = await response.json();
 
       // **ENHANCED: AI Response with processing context**
-      let finalAnswer = data.final_answer
-      if (isEmbeddingProcessing && !data.final_answer.includes('processing')) {
-        finalAnswer += "\n\n💡 *Note: Document processing is still in progress. My response may improve once all embeddings are ready.*"
+      let finalAnswer = data.final_answer;
+      if (isEmbeddingProcessing && !data.final_answer.includes("processing")) {
+        finalAnswer +=
+          "\n\n💡 *Note: Document processing is still in progress. My response may improve once all embeddings are ready.*";
       }
 
       // **ENHANCED: AI Response with new fields**
@@ -1117,57 +1189,61 @@ export function ChatInterface({
         intent: data.intent,
         confidence: data.confidence,
         tables_used: data.tables_used,
-        business_rules_applied: data.business_rules_applied,     // New
-        reference_context: data.reference_context,               // New
+        business_rules_applied: data.business_rules_applied, // New
+        reference_context: data.reference_context, // New
         sample_data: data.sample_data,
         total_rows: data.total_rows,
-        retrieval_stats: data.retrieval_stats,                   // New
-        context_sources: data.context_sources,                    // New
+        retrieval_stats: data.retrieval_stats, // New
+        context_sources: data.context_sources, // New
         po_workflow: data.po_workflow,
         po_suggestion: data.po_suggestion,
-        po_workflow_started: data.po_workflow_started
-      }
+        po_workflow_started: data.po_workflow_started,
+      };
 
-      setMessages((prev) => [...prev, aiResponse])
-
+      setMessages((prev) => [...prev, aiResponse]);
     } catch (error: any) {
-      console.error('Error calling SQL chat API:', error)
-      setError(error.message)
+      console.error("Error calling SQL chat API:", error);
+      setError(error.message);
 
-      let errorContent = `I'm sorry, I encountered an error: ${error.message}`
+      let errorContent = `I'm sorry, I encountered an error: ${error.message}`;
       if (isEmbeddingProcessing) {
-        errorContent += "\n\nThis might be related to ongoing document processing. Please try again in a moment."
+        errorContent +=
+          "\n\nThis might be related to ongoing document processing. Please try again in a moment.";
       }
-      
+
       const errorResponse: Message = {
         id: (Date.now() + 1).toString(),
         content: errorContent,
         sender: "ai",
         timestamp: new Date(),
-        intent: "error"
-      }
-      setMessages((prev) => [...prev, errorResponse])
+        intent: "error",
+      };
+      setMessages((prev) => [...prev, errorResponse]);
     } finally {
-      setIsTyping(false)
-      inputRef.current?.focus()
+      setIsTyping(false);
+      inputRef.current?.focus();
     }
-  }
+  };
 
   // Handle Enter key for sending messages
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSendMessage(e as any)
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage(e as any);
     }
-  }
+  };
 
   if (!selectedProject) {
     return (
       <div className="flex-1 flex items-center justify-center bg-background">
         <div className="text-center py-8 px-4">
           <Bot className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h2 className="text-lg font-semibold text-foreground mb-2">Welcome to SQL Assistant</h2>
-          <p className="text-sm text-muted-foreground mb-4">Select a project from the sidebar to begin querying your database.</p>
+          <h2 className="text-lg font-semibold text-foreground mb-2">
+            Welcome to SQL Assistant
+          </h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            Select a project from the sidebar to begin querying your database.
+          </p>
           <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1">
               <Database className="h-4 w-4" />
@@ -1184,7 +1260,7 @@ export function ChatInterface({
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -1211,7 +1287,7 @@ export function ChatInterface({
       )}
 
       {/* Messages Area - Responsive with proper scrolling */}
-      <div 
+      <div
         className="flex-1 overflow-y-auto px-3 py-4 min-h-0"
         ref={messagesEndRef}
       >
@@ -1240,7 +1316,11 @@ export function ChatInterface({
                       <span className="h-2 w-2 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]"></span>
                       <span className="h-2 w-2 rounded-full bg-primary animate-bounce"></span>
                     </div>
-                    <span className="text-xs text-muted-foreground">{isEmbeddingProcessing ? "Answering (limited by processing)..." : "Answering..."}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {isEmbeddingProcessing
+                        ? "Answering (limited by processing)..."
+                        : "Answering..."}
+                    </span>
                   </div>
                 </CardContent>
               </Card>
@@ -1254,26 +1334,29 @@ export function ChatInterface({
       {/* Input Area - Responsive */}
       <div className="p-3 flex-shrink-0 bg-background border-t">
         <form onSubmit={handleSendMessage} className="max-w-4xl mx-auto">
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Input
               ref={inputRef}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder={
-                isEmbeddingProcessing 
+                isEmbeddingProcessing
                   ? `Embeddings processing... Ask about "${selectedProject.name}" (limited responses)`
-                  : `Ask about "${selectedProject.name}" or say "generate PO for today"`
+                  : `Ask anything about "${selectedProject.name}"`
               }
-              className={`flex-1 text-sm ${isEmbeddingProcessing ? 'border-amber-300 bg-amber-50/30' : ''}`}
+              className={`flex-1 text-sm h-15 rounded-4xl placeholder:text-gray-400 
+    focus:placeholder:text-transparent  ${isEmbeddingProcessing ? "border-amber-300 bg-amber-50/30" : ""
+                }`}
               disabled={isTyping}
               autoComplete="off"
             />
-            <Button 
-              type="submit" 
-              size="sm" 
+            <Button
+              type="submit"
+              size="sm"
               disabled={!message.trim() || isTyping}
-              className={`px-3 ${isEmbeddingProcessing ? 'bg-amber-600 hover:bg-amber-700' : ''}`}
+              className={`px-3 ${isEmbeddingProcessing ? "bg-amber-600 hover:bg-amber-700" : ""
+                }`}
               variant={isEmbeddingProcessing ? "secondary" : "default"}
             >
               {isTyping ? (
@@ -1289,20 +1372,22 @@ export function ChatInterface({
             <div className="flex items-center gap-2">
               <span>Project: {selectedProject.name}</span>
               {isEmbeddingProcessing && (
-                  <Badge variant="secondary" className="bg-amber-100 text-amber-700 text-xs py-0">
-                    <Loader2 className="h-2 w-2 mr-1 animate-spin" />
-                    Processing
-                  </Badge>
-                )}
+                <Badge
+                  variant="secondary"
+                  className="bg-amber-100 text-amber-700 text-xs py-0"
+                >
+                  <Loader2 className="h-2 w-2 mr-1 animate-spin" />
+                  Processing
+                </Badge>
+              )}
             </div>
             <span className="hidden sm:inline">
-              {isEmbeddingProcessing 
+              {isEmbeddingProcessing
                 ? "Limited responses during processing • Press Enter to send"
-                : "Enhanced with schema, rules & docs • Try 'generate PO for today' • Press Enter to send"
-              }
+                : "Enhanced with schema, rules & docs • Try 'generate PO for today' • Press Enter to send"}
             </span>
           </div>
-          
+
           {/* **NEW: Processing warning message** */}
           {isEmbeddingProcessing && (
             <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
@@ -1310,11 +1395,14 @@ export function ChatInterface({
                 <Info className="h-3 w-3" />
                 <span className="font-medium">Processing in progress:</span>
               </div>
-              <span>Document embeddings are being created. Chat responses may be limited until completion.</span>
+              <span>
+                Document embeddings are being created. Chat responses may be
+                limited until completion.
+              </span>
             </div>
           )}
         </form>
       </div>
     </div>
-  )
+  );
 }
