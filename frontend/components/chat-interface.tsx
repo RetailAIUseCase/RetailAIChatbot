@@ -1239,7 +1239,7 @@ export function ChatInterface({
         <div className="text-center py-8 px-4">
           <Bot className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
           <h2 className="text-lg font-semibold text-foreground mb-2">
-            Welcome to SQL Assistant
+            Welcome to Supply Chain Intelligence Assistant
           </h2>
           <p className="text-sm text-muted-foreground mb-4">
             Select a project from the sidebar to begin querying your database.
