@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Calendar } from "@/components/ui/calendar"
+import AlertSection from "@/components/alert-section"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 // import { Input } from "@/components/ui/input"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -760,9 +761,11 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col h-full overflow-y-auto">
+        {/* Alert Section */}
+        <AlertSection></AlertSection>
         {/* Header */}
-        <div className="p-3 border-b">
+        {/* <div className="p-3 border-b">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-medium text-sm">Generated Documents</h3>
             <div className="flex items-center gap-2">
@@ -798,10 +801,10 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
             </div>
           </div>
 
-          {/* <Badge variant="secondary" className="text-xs w-full justify-center">
+          <Badge variant="secondary" className="text-xs w-full justify-center">
             {selectedProject.name}
-          </Badge> */}
-        </div>
+          </Badge>
+        </div> */}
 
         {/* **UNIFIED GENERATION INTERFACE** */}
         {/* <div className="p-3 border-b">
@@ -866,7 +869,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
               )}
             </Button>
           </div> */}
-          <div className="p-3 border-b">
+          {/* <div className="p-3 border-b">
             <div className="text-center">
               <p className="text-xs text-muted-foreground mb-1">
                 💬 Generate POs using chat commands
@@ -875,7 +878,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
                 Try: "generate PO for today"
               </p>
             </div>
-          {/* Add this AFTER the chat hint section: */}
+          
             <div className="p-3 border-b">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-medium">View Date</h4>
@@ -907,16 +910,16 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
               </Popover>
             </div>
 
-          {/* {workflowStatus && (
+          {workflowStatus && (
             <div className="mt-2 bg-blue-50 border border-blue-200 rounded p-2">
               <div className="flex items-center gap-2">
                 <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
                 <p className="text-xs text-blue-800">{workflowStatus}</p>
               </div>
             </div>
-          )}*/}
+          )}
 
-          {/* Enhanced Real-time Status */}
+          
           {workflowStatus && (
             <div className="mt-2 border border-blue-200 rounded bg-gradient-to-r from-blue-50 to-blue-100 dark:from-blue-900/40 dark:to-blue-800/40">
               <div className="p-3">
@@ -936,7 +939,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
             </div>
           )}
 
-        </div>
+        </div> */}
 
         {/* SCROLLABLE CONTENT AREA */}
         <div className="flex-1 overflow-hidden">

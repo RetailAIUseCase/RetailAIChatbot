@@ -51,6 +51,7 @@ import {
   MoreVertical,
   Trash2,
 } from "lucide-react"
+import GeneratedDocuments from "@/components/document-download-section"
 
 interface Project {
   id: string
@@ -805,7 +806,7 @@ export default function DashboardPage() {
           ref={sidebarRef}
           className={`${
             sidebarOpen ? "translate-x-0" : "-translate-x-full lg:-translate-x-full"
-          } fixed lg:relative z-30 w-80 h-full bg-sidebar border-r border-sidebar-border transition-transform duration-200 ease-in-out ${
+          } fixed lg:relative overflow-y-auto scrollbar-hidden z-30 w-80 h-full bg-sidebar border-r border-sidebar-border transition-transform duration-200 ease-in-out ${
             sidebarOpen ? "lg:block" : "lg:hidden"
           } flex flex-col`}
         >
@@ -831,9 +832,9 @@ export default function DashboardPage() {
               <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
                   <DialogTitle>Create New Project</DialogTitle>
-                  <DialogDescription>
+                  {/* <DialogDescription>
                     Create a new project to organize your documents and AI conversations.
-                  </DialogDescription>
+                  </DialogDescription> */}
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
                   <div className="grid gap-2">
@@ -1085,6 +1086,7 @@ export default function DashboardPage() {
                   )}
                 </div>
               )}
+              <GeneratedDocuments></GeneratedDocuments>
             </div>
           </div>
         </aside>
