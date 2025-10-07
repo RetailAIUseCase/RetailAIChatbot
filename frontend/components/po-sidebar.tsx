@@ -763,7 +763,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
     <TooltipProvider>
       <div className="flex flex-col h-full overflow-y-auto">
         {/* Alert Section */}
-        <AlertSection></AlertSection>
+        {/* <AlertSection></AlertSection> */}
         {/* Header */}
         {/* <div className="p-3 border-b">
           <div className="flex items-center justify-between mb-3">
