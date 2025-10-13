@@ -12,6 +12,7 @@ from app.database.connection import db
 from app.config.settings import settings
 from app.utils.date_parser import parse_user_date_safe
 from app.services.po_workflow_service import po_workflow_service
+# from app.services.enhanced_intelligent_po_service_combined import enhanced_intelligent_po_service_combined
 import logging
 
 from app.utils.date_parser_llm import LLMDateParser
@@ -352,9 +353,315 @@ class SQLRAGService:
                     # Include query intent
                     if msg.get('intent'):
                         context += f"Previous Intent: {msg['intent']}\n"
+                    if msg.get('content'):
+                        context += f"Previous SQL Query Final answer: {msg['content']}\n"
+                    if msg.get("metadata"):
+                        meta = msg["metadata"]
+                        # if isinstance(meta, str):
+                        #     try:
+                        #         meta = json.loads(meta)
+                        #     except json.JSONDecodeError:
+                        #         meta = {}  # fallback in case of corrupt data
+                        if "suggested_next_questions" in meta:
+                            context += f"Assistant suggested: {meta['suggested_next_questions']}\n"
+                        if "follow_up_action" in meta:
+                            fa = meta["follow_up_action"]
+                            context += f"Assistant executed a follow-up ({fa['action_type']}): {fa['executed_query']}\n"
                 context += "\n"
         return context
+    
+    # ======================== Intent Detection ========================== 
+    async def detect_query_intent(self, user_query: str, conversation_history: List[Dict]) -> str:
+        """Detect user query intent dynamically"""
+        
+        # Use LLM for complex cases
+        context = ""
+        if conversation_history:
+            # recent = [msg['content'][:50] for msg in conversation_history[-3:]]
+            context = self._build_conversation_context(conversation_history[-4:])
+        prompt = f"""You are an intelligent assistant for supply chain management. 
+    
+            Analyze this user query and previous conversation context and classify it into ONE of these intents:
+            *NOTE*: Always look at the previous conversation context to get better understanding of what the user query is related to, 
+                    a simple "yes" can be related to any follow up resposne or can also be a confirmation to document generation conversation.
 
+            Current User Query: "{user_query}"
+            Previous conversation context: {context}
+
+                1. document_generation - User wants to generate/create documents either specifying using direct keyword or indirectly (PO, invoice, reports, etc.) or based on previous conversation result, 
+                                        analyse it carefully as it can be a confirmation to previous suggestion/clarification as well.
+                                        It can also be a confirmation or follow up to previous conversation related to document generation
+                - Keywords: "generate", "create", "make", "produce", "prepare document", "order materials", "procurement workflow"
+                - Examples: "generate PO for today", "create invoice", "make inventory report"
+
+                2. sql_query - User wants data analysis or database queries or business insights
+                - Questions about data, reports, analytics, trends, counts, sums
+                - Examples: "show me shortfall materials", "give me projection quantity for next month", "what's the inventory"
+
+                3. chit_chat - Casual conversation, greetings, general questions
+                - Greetings, casual talk, general questions not related to data or POs
+                - Examples: "hello", "how are you", "what's the weather"
+
+                4. clarification - User asking about capabilities or help
+                - Questions about what the assistant can do
+                - Examples: "what can you do", "help me", "how do I use this"
+                
+                5. follow_up_response - User responding to a previous follow-up question or giving or asking some clarification about previous generated answers
+                - Short responses like "yes", "no", "okay", "generate it", "show me more"
+                - Context-dependent responses to assistant's questions
+
+            If intent doesn't fall into any of these categories, classify it by understanding the previous conversation context and return in 10-20 letters.
+
+            Examples:
+            - "Hello" → chit_chat
+            - "Show me sales data" → sql_query  
+            - "What can you do?" → clarification
+            - "Thanks!" → chit_chat
+            - "How many customers do we have?" → sql_query
+            - "create PO for next week" → document_generation
+            - "generate purchase order for tomorrow" → document_generation
+
+            Respond with only the intent name: document_generation, sql_query, chit_chat, clarification or follow_up_response"""
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.NLP_LLM_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=10
+            )
+            intent = response.choices[0].message.content.strip().lower()
+            # if intent == 'po_generation':
+            #     # Further verify with secondary check
+            #     is_po = await self._llm_verify_po_intent(user_query)
+            #     return 'po_generation' if is_po else 'sql_query'
+
+            return intent if intent in ['document_generation', 'sql_query', 'chit_chat', 'clarification', 'follow_up_response'] else 'sql_query'
+            
+        except Exception as e:
+            logger.error(f"Intent detection failed: {e}")
+            return 'sql_query'  # Default to SQL query
+        
+    # ==================== DOCUMENT DETECTION ====================
+
+    async def detect_document_type_and_requirements(
+        self, user_query: str, context:str
+    ) -> Dict[str, Any]:
+        """Dynamically detect document type and missing requirements"""
+        # context = ""
+        # if conversation_history:
+        #     # recent = [msg['content'][:50] for msg in conversation_history[-3:]]
+        #     context = self._build_conversation_context(conversation_history[-3:])
+
+        prompt = f"""You are an expert at understanding supply chain document generation requests.
+
+        Analyze the user query along with previous conversation and determine document requirements:
+
+        User Query: "{user_query}"
+        Conversation Context: {context}
+ 
+        Document types in supply chain:
+        - purchase_order (PO)
+        - invoice
+        - shipping_note
+        - inventory_report
+        - demand_forecast_report
+        - supplier_performance_report
+        - quality_certificate
+        - bill_of_materials (BOM)
+        - delivery_challan
+
+
+        Return JSON:
+        {{
+            "is_document_request": true/false,
+            "document_type": "type_name or null",
+            "confidence": 0.0-1.0,
+            "missing_parameters": ["param1", "param2"],
+            "extracted_parameters": {{"param": "value"}},
+            "can_generate_immediately": true/false,
+            "suggested_questions": ["question1?", "question2?"]
+        }}
+        """
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.NLP_LLM_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            logger.error(f"Document detection failed: {e}")
+            return {
+                "is_document_request": False,
+                "confidence": 0.0
+            }
+
+    # ==================== CONTEXT-AWARE NEXT QUESTION SUGGESTION ====================
+    async def suggest_next_questions(
+        self,
+        user_query: str,
+        final_answer: str,
+        intent: Optional[str] = None,
+        query_results: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
+        """
+        Suggest context-aware follow-up questions or next steps like any Chat assitant.
+        Adapts based on intent and query result patterns (e.g., shortages, supplier issues).
+        """
+
+        # Lightweight heuristic before LLM call (avoids unnecessary token usage)
+        suggestions = []
+
+        # --- Ask the LLM ---
+        if not suggestions:
+            prompt = f"""
+            You are a helpful assistant for supply chain management.
+            The user asked: "{user_query}"
+            You replied: "{final_answer}"
+            Intent detected: {intent or "unknown"}
+
+            Suggest 2–3 natural follow-up questions or next steps the user might take next,
+            relevant to their intent or context. 
+            - Be conversational
+            - Be informative
+            - Be creative to generate more natural language formal questions for business stakeholders
+            - Suggest questions based on the current available services - document generation, quering results from database using SQL queries
+
+            Examples:
+            - User-> show me material with shortfall System->"I notice shortfalls. Would you like me to generate Purchase order for these items?
+            - Asking for vendor details - "Do you want to see vendor details?"
+            - "Should I forecast next week’s demand?"
+
+            Respond in JSON only:
+            {{
+                "suggested_next_questions": ["question1", "question2", "question3"] (list of natural language questions suggested)
+            }}
+            """
+
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.NLP_LLM_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0.3
+                )
+                return json.loads(response.choices[0].message.content)
+            except Exception as e:
+                logger.error(f"LLM next-question suggestion failed: {e}")
+                return {"suggested_next_questions": []}
+
+        return {"suggested_next_questions": suggestions[:3]}
+    
+    # ==================== HANDLE FOLLOW-UP CONFIRMATION ====================
+    async def handle_follow_up_confirmation(
+        self,
+        user_query: str,
+        conversation_history: List[Dict],
+        user_id: int,
+        project_id: str
+    ) -> Dict[str, Any]:
+        """
+        Handle confirmations like 'yes', 'okay', or modified follow-ups.
+        Uses LLM to semantically interpret what the user wants next.
+        """
+
+        # positive_patterns = ["yes", "yeah", "sure", "please do", "go ahead", "ok", "okay", "yup"]
+        # normalized = user_query.strip().lower()
+
+        # Step 1: detect if it's a confirmation
+        # if not any(p in normalized for p in positive_patterns):
+        #     return {
+        #         "intent": "follow_up_response",
+        #         "final_answer": "I’m not sure what you mean — could you specify what you want me to do next?",
+        #         "confidence": 0.5
+        #     }
+
+        # Step 1: find the last assistant message with next-question suggestions
+        for msg in reversed(conversation_history):
+            if msg["role"] == "assistant" and "suggested_next_questions" in msg.get("metadata", {}):
+                suggestions = msg["metadata"]["suggested_next_questions"]
+                if not suggestions:
+                    continue
+
+                # --- Step 2: use LLM to interpret user's confirmation or modification ---
+                follow_up_prompt = f"""
+                You are an intelligent assistant.
+                The assistant previously suggested these follow-up actions:
+                {json.dumps(suggestions, indent=2)}
+
+                The user replied: "{user_query}"
+
+                Task:
+                - Determine if the user is confirming one of the suggestions, modifying it, or rejecting it.
+                - If confirming or modifying, produce an actionable follow-up command.
+                - If rejecting, respond politely with no action.
+
+                Return JSON with this structure:
+                {{
+                "action_type": "confirm" | "modify" | "reject" | "unclear",
+                "selected_suggestion": "<the matched suggestion text>",
+                "action_query": "<the actionable query to execute>"
+                }}
+                """
+
+                try:
+                    response = await self.client.chat.completions.create(
+                        model=self.NLP_LLM_model,
+                        messages=[{"role": "user", "content": follow_up_prompt}],
+                        response_format={"type": "json_object"},
+                        temperature=0.2
+                    )
+
+                    result = json.loads(response.choices[0].message.content)
+                    action_type = result.get("action_type", "")
+                    action_query = result.get("action_query", "")
+                    selected_action = result.get("selected_suggestion", "")
+
+                    # --- Step 3: route behavior based on LLM output ---
+                    if action_type in ["confirm", "modify"] and action_query:
+                        logger.info(f"User confirmed/modifed follow-up: {action_query}")
+                        result = await self.process_user_query(
+                            action_query,
+                            {},
+                            user_id,
+                            project_id
+                        )
+
+                        # Add metadata for storage
+                        result["intent"] = "follow_up_response"
+                        result["action_type"] = action_type
+                        result["selected_suggestion"] = selected_action
+                        result["action_query"] = action_query
+
+                        return result
+                    elif action_type == "reject":
+                        return {
+                            "intent": "follow_up_response",
+                            "final_answer": "Got it — I won’t proceed with that action.",
+                            "confidence": 0.9
+                        }
+                    else:
+                        return {
+                            "intent": "follow_up_response",
+                            "final_answer": "I’m not completely sure what you mean — could you clarify?",
+                            "confidence": 0.5
+                        }
+
+                except Exception as e:
+                    logger.error(f"LLM follow-up confirmation failed: {e}")
+                    break
+
+        # Step 4: fallback if no matching assistant suggestion found
+        return {
+            "intent": "follow_up_response",
+            "final_answer": "I’m not sure what you’re referring to — could you specify what I should do?",
+            "confidence": 0.4
+        }
+    # ==================== SQL GENERATION & EXECUTION ====================
     async def generate_sql_response(
         self, 
         user_query: str, 
@@ -439,9 +746,6 @@ class SQLRAGService:
                     Available Database Schemas:
                     {db_context}
 
-                    Reference Context:
-                    {reference_context}
-
                     Conversation History:
                     {conversation_context}
 
@@ -502,6 +806,16 @@ class SQLRAGService:
                             relevant_data
                         )
                         result["final_answer"] = final_response
+
+                        if result.get("final_answer"):
+                            next_suggestions = await self.suggest_next_questions(
+                                user_query,
+                                result["final_answer"],
+                                intent=result.get("intent"),
+                                query_results=result.get("query_result",{}).get("data",[])
+                            )
+                            if next_suggestions.get("suggested_next_questions"):
+                                result["suggested_next_questions"] = next_suggestions["suggested_next_questions"]
                         logger.info(f"SQL query succeeded on attempt {attempt + 1}/{max_retries + 1}")
                         break
                     else:
@@ -538,6 +852,7 @@ class SQLRAGService:
                         "sql_errors": sql_errors
                     }
         return result   
+    
     async def execute_sql_query(self, sql_query: str) -> Dict[str, Any]:
         """Safely execute SQL query"""
         if not db.pool:
@@ -586,10 +901,13 @@ class SQLRAGService:
         # Include context about business rules if they were used
         business_context = ""
         reference_context = ""
+
         if relevant_data.get('business_logic'):
             business_context = f"\n\nBased on your business rules: {relevant_data['business_logic'][0]['content'][:200]}..." if relevant_data['business_logic'] else ""
-        if relevant_data.get('references'):
-            reference_context = f"\n\nReferences: {', '.join(ref['content'][:200] for ref in relevant_data['references'])}..." if relevant_data['references'] else ""
+        
+        # if relevant_data.get('references'):
+        #     reference_context = f"\n\nReferences: {', '.join(ref['content'][:200] for ref in relevant_data['references'])}..." if relevant_data['references'] else ""
+        
         prompt = f"""You are a helpful assistant.
 
             The user asked: {user_query}
@@ -597,7 +915,6 @@ class SQLRAGService:
             SQL Query Results: {json.dumps(query_results, indent=2, default=str)}
             The SQL query returned: {len(query_results)} rows
             Business Context: {business_context}
-            Reference Context: {reference_context}
 
             Instructions:
             - Provide a clear, conversational summary of the results
@@ -656,7 +973,19 @@ class SQLRAGService:
                 role='user',
                 content=query
             )
-            
+            metadata = {}
+
+            # Store follow-up suggestions if available
+            if response.get("suggested_next_questions"):
+                metadata["suggested_next_questions"] = response["suggested_next_questions"]
+
+            # Store follow-up execution info (if from handle_follow_up_confirmation)
+            if response.get("action_type"):
+                metadata["follow_up_action"] = {
+                    "action_type": response["action_type"],
+                    "selected_suggestion": response.get("selected_suggestion"),
+                    "executed_query": response.get("action_query"),
+                }
             # Store assistant response
             await db.store_chat_message(
                 conversation_id=conversation_id,
@@ -667,6 +996,7 @@ class SQLRAGService:
                 sql_query=response.get("sql_query"),
                 query_result=response.get("query_result"),
                 intent=response.get("intent"),
+                metadata=metadata,
                 tables_used=response.get("tables_used", [])
             )
         except Exception as e:
@@ -680,11 +1010,20 @@ class SQLRAGService:
             # Convert to format expected by the chat
             conversation_history = []
             for msg in messages:
+                meta = msg.get('metadata')
+            
+                # Ensure metadata is a dict
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except json.JSONDecodeError:
+                        meta = {}  # fallback for malformed JSON
                 conversation_history.append({
                     'role': msg['role'],
                     'content': msg['content'],
                     'sql_query': msg.get('sql_query'),
                     'intent': msg.get('intent'),
+                    'metadata': meta,
                     'timestamp': msg['created_at']
                 })
             
@@ -692,62 +1031,12 @@ class SQLRAGService:
         except Exception as e:
             logger.error(f"Error fetching conversation history: {e}")
             return []
-        
-    # async def store_conversation(self, user_id: int, project_id: str, query: str, response: Dict):
-    #     """Store conversation for context in future queries"""
-    #     conversation_key = f"{user_id}_{project_id}"
-        
-    #     if conversation_key not in self.conversation_memory:
-    #         self.conversation_memory[conversation_key] = []
-        
-    #     # Add user message
-    #     self.conversation_memory[conversation_key].append({
-    #         "role": "user",
-    #         "content": query,
-    #         "timestamp": asyncio.get_event_loop().time()
-    #     })
-        
-    #     # Add assistant response
-    #     # Add assistant response with enhanced context
-    #     assistant_message = {
-    #         "role": "assistant",
-    #         "content": response.get("final_answer", response.get("explanation", "")),
-    #         "intent": response.get("intent"),
-    #         "timestamp": asyncio.get_event_loop().time()
-    #     }
-        
-    #     # Include SQL query and results if available
-    #     if response.get("sql_query"):
-    #         assistant_message["sql_query"] = response["sql_query"]
-    #         assistant_message["tables_used"] = response.get("tables_used", [])
-    #         assistant_message["business_rules_applied"] = response.get("business_rules_applied", [])
-            
-    #     if response.get("query_result"):
-    #         # Store a summary of results, not full data
-    #         result_summary = {
-    #             "success": response["query_result"].get("success"),
-    #             "row_count": response["query_result"].get("row_count", 0),
-    #             "error": response["query_result"].get("error") if not response["query_result"].get("success") else None
-    #         }
-    #         assistant_message["query_result_summary"] = result_summary
-        
-    #     self.conversation_memory[conversation_key].append(assistant_message)
-        
-    #     # Keep only last 20 messages to manage memory
-    #     if len(self.conversation_memory[conversation_key]) > 20:
-    #         self.conversation_memory[conversation_key] = self.conversation_memory[conversation_key][-20:]
-    
-    # async def get_conversation_history(self, user_id: int, project_id: str) -> List[Dict]:
-    #     """Get conversation history for context"""
-    #     conversation_key = f"{user_id}_{project_id}"
-    #     return self.conversation_memory.get(conversation_key, [])
-
 
     async def _llm_verify_po_intent(self, user_query: str) -> bool:
-        """Use LLM to verify if query is really about PO generation"""
+        """Use LLM to verify if query is really about Document generation"""
         try:
             prompt = f"""
-                Analyze this user query and determine if the user wants to generate/create a purchase order (PO).
+                Analyze this user query and determine if the user wants to generate/create a document.
 
                 Query: "{user_query}"
 
@@ -779,19 +1068,20 @@ class SQLRAGService:
             logger.warning(f"LLM verification failed: {e}")
             return True  # Default to True if LLM fails
         
-    async def extract_date_from_query_llm(self, user_query: str) -> str:
+    async def extract_date_from_query_llm(self, user_query: str, context:str) -> str:
         """Extract date from query using LLM - much more flexible"""
         
         try:
             current_date = datetime.now().strftime("%m/%d/%Y")  # e.g., 09/22/2025
             
-            prompt = f"""Extract the date from this user query about purchase order generation.
+            prompt = f"""Extract the date from this user query about document generation. 
+                Your task is to identify which date the user intends for this PO generation request.
 
-                Today's date: {current_date}
+                Use these rules carefully:
 
-                User query: "{user_query}"
-
-                Rules:
+                1. First, look for **explicit dates or date phrases** in the current query.
+                - Examples: "today", "tomorrow", "10/10", "Oct 10", "next Monday", "this Friday".
+                - If found → use that and ignore previous conversation context.
                 - If user says "today" or "now" → return "today"
                 - If user says "tomorrow" → return "tomorrow" 
                 - If user says "yesterday" → return "yesterday"
@@ -799,12 +1089,31 @@ class SQLRAGService:
                 - If user says "next monday", "this friday" → return the exact text
                 - If no date is mentioned → return "today"
 
+                2. If **no date mentioned in current query**, then:
+                - Check previous conversation context to see if the user recently referred to a date
+                    (e.g., “show shortfall for 10/10”, “analyze order for next week”).
+                - If a recent date reference exists, reuse that same date.
+                - But only reuse if the conversation context is clearly related (like follow-up queries).
+
+                3. If neither current query nor recent context mentions a date, use **today** as the default.
+
+                4. Do NOT use old or unrelated conversation dates if they appear outdated or not relevant to current intent.
+
+                Conversation context (for reference):
+                {context}
+
+                Today's date: {current_date}
+
+                User query: "{user_query}"
+
                 Extract only the date portion. Examples:
                 - "generate PO for today" → "today"
                 - "create purchase order for tomorrow" → "tomorrow"
                 - "make PO for sep 22nd 2025" → "sep 22nd 2025"
                 - "generate PO for next monday" → "next monday"
                 - "create PO" → "today"
+
+                If no date is specified consider it for today's date, also analyse the user query, if it's a new request for generating document and no date is mentioned, consider today's date.
 
                 Response (only the date part):"""
 
@@ -831,13 +1140,66 @@ class SQLRAGService:
             logger.error(f"LLM date extraction failed: {e}")
             return "today"  # Safe fallback
 
+    # ==================== DOCUMENT GENERATION HANDLERS ====================
 
-    async def handle_po_generation_request(self, user_query: str, user_id: int, project_id: str) -> Dict[str, Any]:
+    async def handle_document_generation(
+        self, user_query: str, user_id: int, project_id: str, conversation_history: List[Dict]
+    ) -> Dict[str, Any]:
+        """Handle document generation requests"""
+        context = ""
+        if conversation_history:
+            # recent = [msg['content'][:50] for msg in conversation_history[-3:]]
+            context = self._build_conversation_context(conversation_history[-4:])
+
+        # Detect document type and requirements
+        doc_detection = await self.detect_document_type_and_requirements(
+            user_query, context
+        )
+
+        if not doc_detection.get("is_document_request") or doc_detection.get("confidence", 0) < 0.7:
+            return {
+                "intent": "clarification_needed",
+                "final_answer": "I'm not sure what document you want to generate. Could you please specify? (e.g., purchase order, invoice, report)",
+                "confidence": 0.5
+            }
+
+        doc_type = doc_detection.get("document_type")
+
+        # Handle purchase order generation
+        if doc_type == "purchase_order":
+            # active_session = enhanced_intelligent_po_service_combined._get_user_active_session(
+            #     user_id, project_id
+            # )
+            # if active_session:
+                # User is responding to a confirmation step
+                # Route directly to PO service (bypass intent detection)
+                # result = await enhanced_intelligent_po_service_combined.start_po_workflow(
+                #     user_id=user_id,
+                #     project_id=project_id,
+                #     user_query=user_query,
+                #     conversation_history=conversation_history,
+                #     order_date=None
+                # )
+
+                # return result
+            
+            return await self.handle_po_generation_request(user_query, user_id, project_id, conversation_history, context)
+
+        # Handle other document types
+        else:
+            return {
+                "intent": "document_generation",
+                "final_answer": f"Document generation for {doc_type} is not yet implemented. Currently, I can generate purchase orders. Would you like me to generate a PO instead?",
+                "confidence": 0.7,
+                "document_type": doc_type
+            }
+        
+    async def handle_po_generation_request(self, user_query: str, user_id: int, project_id: str, conversation_history: List[Dict], context:str) -> Dict[str, Any]:
         """Handle PO generation request - trigger workflow in background"""
         
         try:
             # Extract date from query
-            extracted_date = await self.extract_date_from_query_llm(user_query)
+            extracted_date = await self.extract_date_from_query_llm(user_query, context)
             
             # Parse date
             # parsed_date, is_valid = parse_user_date_safe(extracted_date)
@@ -847,21 +1209,38 @@ class SQLRAGService:
             # Trigger PO workflow in background using existing service
             logger.info(f"🤖 PO generation via chat: '{user_query}' -> '{extracted_date}' -> '{parsed_date}'")
             
+            # result = await enhanced_intelligent_po_service_combined.start_po_workflow(
+            #     user_id=user_id,
+            #     project_id=project_id,
+            #     order_date=parsed_date,
+            #     user_query=user_query,
+            #     conversation_history=conversation_history,
+            # )
             result = await po_workflow_service.start_po_workflow(
                 user_id=user_id,
                 project_id=project_id,
                 order_date=parsed_date,
-                trigger_query=f"chat:{user_query}"  # Mark as chat-triggered
+                user_query=user_query,
+                conversation_history=conversation_history,
             )
-            
+            # return result
             if result.get("success"):
                 return {
                     "intent": "po_generation",
-                    "explanation": f"I've started generating a purchase order for {parsed_date} in the background.",
-                    "final_answer": f"🚀 PO Generation Started\n\nI've initiated purchase order generation for {parsed_date} in the background. You can continue our conversation while I process this.\n\n📋 Check the sidebar for real-time progress updates and generated POs.\n\n💬 Feel free to ask me other questions while the workflow runs!",
+                    "explanation": f"Intelligent Document generation started for {parsed_date}",
+                    "workflow_id": result.get("workflow_id"),
+                    "final_answer": f"🤖 Document Generation Started\n\n"
+                                  f"I'm analyzing your request for {result.get("user_query_scope", user_query)}...\n\n"
+                                #   f"💡What I'm doing:\n"
+                                #     f"- Understanding your specific requirements\n"
+                                #     f"- Checking inventory and shortfalls\n"
+                                #     f"- Finding optimal vendors\n"
+                                #     f"- Generating purchase orders\n\n"
+                                  f"Watch the sidebar for real-time progress!\n\n"
+                                  f"💬 You can continue our conversation while I process this.",
                     "confidence": 0.95,
                     "tables_used": [],
-                    "po_workflow_started": True
+                    "po_workflow_started": True,
                 }
             else:
                 return {
@@ -882,69 +1261,7 @@ class SQLRAGService:
                 "tables_used": []
             }
 
-    # Intent Detection
-    async def detect_query_intent(self, user_query: str, conversation_history: List[Dict]) -> str:
-        """Detect if user query is SQL-related, chit-chat, or clarification"""
-        
-        # Use LLM for complex cases
-        context = ""
-        if conversation_history:
-            recent = [msg['content'][:50] for msg in conversation_history[-3:]]
-            context = f"Recent conversation: {', '.join(recent)}"
-
-        prompt = f"""You are a SQL assistant that helps users query databases and generate purchase orders. 
-    
-            Analyze this user query and classify it into ONE of these intents:
-                1. po_generation - User wants to generate/create purchase orders
-                - Keywords: "generate PO", "create purchase order", "make PO", "po for", "order materials", "procurement workflow"
-                - Examples: "generate PO for today", "create purchase order for tomorrow", "make PO for next week"
-
-                2. sql_query - User wants data analysis or database queries or business insights
-                - Questions about data, reports, analytics, trends, counts, sums
-                - Examples: "show me shortfall materials", "give me projection quantity for next month", "what's the inventory"
-
-                3. chit_chat - Casual conversation, greetings, general questions
-                - Greetings, casual talk, general questions not related to data or POs
-                - Examples: "hello", "how are you", "what's the weather"
-
-                4. clarification - User asking about capabilities or help
-                - Questions about what the assistant can do
-                - Examples: "what can you do", "help me", "how do I use this"
-
-            Current User Query: "{user_query}"
-            Previous conversation context: {context}
-
-            Examples:
-            - "Hello" → chit_chat
-            - "Show me sales data" → sql_query  
-            - "What can you do?" → clarification
-            - "Thanks!" → chit_chat
-            - "How many customers do we have?" → sql_query
-            - "create PO for next week" → po_generation
-            - "generate purchase order for tomorrow" → po_generation
-
-            Respond with only the intent name: po_generation, sql_query, chit_chat, or clarification"""
-
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.NLP_LLM_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=10
-            )
-            
-            intent = response.choices[0].message.content.strip().lower()
-            if intent == 'po_generation':
-                # Further verify with secondary check
-                is_po = await self._llm_verify_po_intent(user_query)
-                return 'po_generation' if is_po else 'sql_query'
-            return intent if intent in ['po_generation', 'sql_query', 'chit_chat', 'clarification'] else 'sql_query'
-            
-        except Exception as e:
-            logger.error(f"Intent detection failed: {e}")
-            return 'sql_query'  # Default to SQL query
-
-    # NEW: Handle Chit-Chat
+    # Handle Chit-Chat
     async def generate_chit_chat_response(self, user_query: str, conversation_history: List[Dict]) -> str:
         """Generate friendly conversational responses"""
         
@@ -1030,18 +1347,18 @@ class SQLRAGService:
         
         return "I can help you query your database, analyze your data, and generate purchase orders.. Just ask me questions in natural language! For example: 'Show me sales data for last month' or 'How many customers do we have?'"
     
-    def _check_shortfall_in_data(self, data: List[Dict]) -> bool:
-        """Check if SQL results indicate shortfall patterns"""
-        if not data:
-            return False
+    # def _check_shortfall_in_data(self, data: List[Dict]) -> bool:
+    #     """Check if SQL results indicate shortfall patterns"""
+    #     if not data:
+    #         return False
         
-        data_str = str(data).lower()
-        shortfall_indicators = [
-            'shortfall', 'shortage', 'insufficient', 'negative', 
-            'below minimum', 'out of stock', 'low inventory'
-        ]
+    #     data_str = str(data).lower()
+    #     shortfall_indicators = [
+    #         'shortfall', 'shortage', 'insufficient', 'negative', 
+    #         'below minimum', 'out of stock', 'low inventory'
+    #     ]
         
-        return any(indicator in data_str for indicator in shortfall_indicators)
+    #     return any(indicator in data_str for indicator in shortfall_indicators)
 
     # Main Query Processing
     async def process_user_query(
@@ -1066,9 +1383,16 @@ class SQLRAGService:
             logger.info(f"Detected intent: {intent} for query: '{user_query}'")
 
             # Step 2: Route based on intent
-            if intent == 'po_generation':
-                result = await self.handle_po_generation_request(user_query, user_id, project_id)
-            
+            if intent == 'document_generation':
+                result = await self.handle_document_generation(
+                    user_query, user_id, project_id, conversation_history
+                )
+                
+            elif intent == 'follow_up_response':
+                result = await self.handle_follow_up_confirmation(
+                    user_query, conversation_history, user_id, project_id
+                )
+
             elif intent == 'chit_chat':
                 response_text = await self.generate_chit_chat_response(user_query, conversation_history)
                 result = {
@@ -1100,13 +1424,13 @@ class SQLRAGService:
             if result.get("query_result") and result["query_result"].get("success"):
                 data = result["query_result"]["data"]
                 row_count = len(data)
-                if self._check_shortfall_in_data(data):
-                    result["po_suggestion"] = {
-                        "suggest_po": True,
-                        "reason": "Query results indicate material shortfall",
-                        "suggestion_text": "💡 I notice this data shows material shortfalls. Would you like me to generate purchase orders to address these shortages? Just say 'generate PO for today' or specify a date."
-                    }
-                    result["final_answer"] += "\n\n" + result["po_suggestion"]["suggestion_text"]
+                # if self._check_shortfall_in_data(data):
+                #     result["po_suggestion"] = {
+                #         "suggest_po": True,
+                #         "reason": "Query results indicate material shortfall",
+                #         "suggestion_text": "💡 I notice this data shows material shortfalls. Would you like me to generate purchase orders to address these shortages? Just say 'generate PO for today' or specify a date."
+                #     }
+                #     result["final_answer"] += "\n\n" + result["po_suggestion"]["suggestion_text"]
 
                 # Store nested
                 if row_count > 10:

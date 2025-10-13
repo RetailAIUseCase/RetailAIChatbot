@@ -242,6 +242,7 @@ class Database:
                     sql_query TEXT,
                     query_result JSONB,
                     intent TEXT,
+                    metadata JSONB,
                     tables_used TEXT[],
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
@@ -872,6 +873,7 @@ class Database:
         sql_query: str = None,
         query_result: dict = None,
         intent: str = None,
+        metadata: dict = None,
         tables_used: List[str] = None
     ) -> Dict[str, Any]:
         """Store a chat message"""
@@ -889,8 +891,8 @@ class Database:
                 return json.dumps({"error": f"Serialization failed: {str(e)}"})
         query = """
         INSERT INTO chat_messages 
-        (conversation_id, user_id, project_id, role, content, sql_query, query_result, intent, tables_used)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (conversation_id, user_id, project_id, role, content, sql_query, query_result, intent, metadata, tables_used)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id::text, conversation_id::text, role, content, created_at::text
         """
 
@@ -900,7 +902,7 @@ class Database:
                 row = await connection.fetchrow(
                     query, conversation_id, user_id, project_id, role, content,
                     sql_query, safe_json_dumps(query_result) if query_result else None,
-                    intent, tables_used
+                    intent, safe_json_dumps(metadata), tables_used
                 )
                 
                 # Update conversation timestamp
@@ -921,7 +923,7 @@ class Database:
 
         query = """
         SELECT id::text, conversation_id::text, role, content, sql_query, 
-            query_result, intent, tables_used, created_at::text
+            query_result, intent, metadata, tables_used, created_at::text
         FROM chat_messages
         WHERE conversation_id = $1 AND user_id = $2
         ORDER BY created_at ASC
