@@ -8,6 +8,8 @@ import secrets
 import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
+
+from openai import AsyncOpenAI
 from app.database.connection import db
 from app.services.po_pdf_generator import create_po_pdf_safe
 from app.services.email_service import email_service
@@ -21,6 +23,13 @@ logger = logging.getLogger(__name__)
 
 class POWorkflowService:
     def __init__(self):
+        self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        self.llm_model = settings.LLM_MODEL
+        self.nlp_llm_model = settings.NLP_LLM_MODEL
+        self.clarification_sessions: Dict[str, Dict[str, Any]] = {}
+        self.confirmation_sessions: Dict[str, Dict[str, Any]] = {}  # Track confirmation steps
+        self.max_clarification_retries = 3
+
         self.approval_threshold = settings.PO_APPROVAL_THRESHOLD
         self.top_k = settings.TOP_K
         self.similarity_threshold = settings.SIMILARITY_THRESHOLD
@@ -36,7 +45,9 @@ class POWorkflowService:
         user_id: int, 
         project_id: str, 
         order_date: str,
-        trigger_query: str = None
+        user_query: str,
+        conversation_history: List[Dict],
+        user_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Start PO generation workflow (non-blocking)"""
         
@@ -47,24 +58,45 @@ class POWorkflowService:
                 user_id=user_id,
                 project_id=project_id,
                 order_date=order_date,  # Pass date object, not string
-                trigger_query=trigger_query
+                trigger_query=user_query
             )
             
             if not workflow_result["success"]:
                 return {"success": False, "error": workflow_result["error"]}
             
             workflow_id = workflow_result["workflow_id"]
-            
+            business_rules = await self._extract_business_rules(user_id, project_id, user_query)
+            from app.services.rag_sql_service import rag_sql_service
+            conversation_context = rag_sql_service._build_conversation_context(conversation_history[-8:])
+
+            # Extract user intent from query and conversation
+            logger.info(f"🔍 Extracting user intent from: '{user_query}'")
+            user_intent = await self._extract_user_intent(
+                user_query=user_query or f"Generate PO for {order_date}",
+                conversation_context=conversation_context or "",
+                order_date=order_date,
+                business_rules=business_rules
+            )
+            # Store intent for use in subsequent steps
+            await db.update_workflow(
+                workflow_id=workflow_id,
+                step=0,
+                status='analyzing',
+                results={"user_intent": user_intent, "step_name": "intent_extraction"},
+                error=None
+            )
             # Start background task (non-blocking)
             asyncio.create_task(self._execute_workflow_steps(
-                workflow_id, user_id, project_id, order_date, trigger_query
+                workflow_id, user_id, project_id, order_date, user_query, conversation_history, business_rules, user_intent
             ))
             
             return {
                 "success": True,
                 "workflow_id": workflow_id,
                 "message": "PO generation workflow started",
-                "status": "running"
+                "status": "running",
+                "user_query_scope": user_intent.get("natural_language_scope","")
+
             }
             
         except Exception as e:
@@ -73,96 +105,530 @@ class POWorkflowService:
                 "success": False,
                 "error": str(e)
             }
+    async def _extract_business_rules(
+        self,
+        user_id: int,
+        project_id: str,
+        user_query: str
+    ) -> Dict[str, Any]:
+        """Extract business rules from embeddings"""
+        try:
+            from app.services.rag_sql_service import rag_sql_service
+
+            query_embedding = await rag_sql_service.embed_query(
+                "purchase order approval threshold procurement rules and logics"
+            )
+
+            relevant_data = await rag_sql_service.retrieve_relevant_data(
+                query_embedding, user_id, project_id, 
+                top_k=self.top_k, similarity_threshold=self.similarity_threshold
+            )
+
+            business_logic = relevant_data.get("business_logic", [])
+            rules_text = "\n".join([
+                f"Rule {rule['rule_number']}: {rule['content']}"
+                for rule in business_logic
+            ])
+
+            prompt = f"""Extract Purchase Order business rules from business logic.
+
+                            Business Rules:
+                            {rules_text}
+
+                            Return JSON:
+                            {{
+                                "approval_threshold": <number or null>,
+                                "default_lead_time_days": <number or null>,
+                                "vendor_selection_criteria": ["criterion"],
+                                "mandatory_fields": ["field"],
+                                "po_generation_constraints": ["constraint"],
+                                "rules_applied": ["summary"]
+                            }}
+                        """
+
+            response = await self.client.chat.completions.create(
+                model=self.nlp_llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.2
+            )
+
+            extracted = json.loads(response.choices[0].message.content)
+
+            if not extracted.get("approval_threshold"):
+                extracted["approval_threshold"] = self.approval_threshold
+
+            return extracted
+
+        except Exception as e:
+            logger.error(f"Rule extraction failed: {e}")
+            return {
+                "approval_threshold": self.approval_threshold,
+                "rules_applied": ["Using defaults due to extraction error"]
+            }
         
+    async def _extract_user_intent(
+        self,
+        user_query: str,
+        conversation_context: str,
+        order_date: str,
+        business_rules: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Extract user intent from query and conversation context
+        
+        Returns structured intent with:
+        - Specific orders, SKUs, materials mentioned
+        - Date overrides
+        - Scope (all vs specific)
+        - Filters to apply in queries
+        """
+        try:
+            # Build conversation context
+            # from app.services.rag_sql_service import rag_sql_service
+            # context = rag_sql_service._build_conversation_context(conversation_history)
+            
+            prompt = f"""Analyze the user's request and extract their intent for PO generation.
+
+                **User Query:** "{user_query}"
+
+                **Conversation History:**
+                {conversation_context}
+
+                **Business Rules Available:**
+                {json.dumps(business_rules, indent=2)}
+
+                **Default Order Date:** {order_date}
+
+                **Extract the following from user query and business rules available:**
+
+                1. **Entities Mentioned:**
+                - Order numbers (e.g., "ORD-123", "order #456", "order 789")
+                - SKU IDs (e.g., "SKU001", "SKU-ABC", "product SKU002")
+                - Material IDs (e.g., "PK0001", "material M123", "packaging PK0005")
+                - Material category (eg., "Packaging material", "all", "Finished Goods")
+                - Material description (e.g., "Pet bottle", "bottle cap", "labels", "syrup", "Pet Bottle 500 ml", "Bottle Cap 500 ml pet bottle")
+                - Dates (e.g., "today", "yesterday", "2025-10-08", "last week")
+                - Quantities specified (e.g., "100 units", "500 pieces", "1000 bottles")
+                - Vendors (vendor name, vendor id or vendor email id)
+
+                2. **Scope:**
+                - "all": Generate PO for all shortfalls on date
+                - "specific_orders": Only for mentioned order numbers
+                - "specific_skus": Only for mentioned SKUs
+                - "specific_materials": Only for mentioned materials
+                - "direct_purchase": User directly specifies materials and quantities
+                - "date_range": For a date range
+                - "vendor" : For specific vendor's
+
+                3. **Context References:**
+                - Check if user says "this", "that", "these", "those" referring to previous messages
+                - Extract what they're referring to from conversation history
+                - Extract details from previous messages context that are relevant
+
+                **Return JSON:**
+                {{
+                "po_mode": "shortfall_driven|direct_materials|mixed",
+                "intent_type": "all|specific_orders|specific_skus|specific_materials|direct_materials|date_range",
+                "extracted_entities": {{
+                    "order_numbers": ["ORD-123", ...],
+                    "sku_ids": ["SKU001", ...],
+                    "material_ids": ["PK0001", ...],
+                    "material_descriptions": ["Pet bottle", "Bottle cap", "Pet bottle 500 ml", ...],
+                    "material_category": ["all","packaging material","raw material",...],
+                    "quantities_specified": {{
+                        "PK0001": 100,
+                        "PK0003": 500,
+                        "Pet bottle": 100,
+                        "default_quantity": null  // If user says "PK0001" without quantity
+                        }},
+                    "date_mentioned": "2025-10-08" or null,
+                    "date_range": {{"start": "...", "end": "..."}} or null,
+                    "vendor_details":[...]
+                }},
+                "context_references": {{
+                    "refers_to_previous": true/false,
+                    "referenced_entity": "order|sku|material|shortfall",
+                    "referenced_values": ["..."]
+                }},
+                "filters_to_apply": {{
+                    "order_filter": "WHERE order_number IN ('ORD-123', ...)" or "",
+                    "sku_filter": "WHERE sku_id IN ('SKU001', ...)" or "",
+                    "material_filter": "WHERE material_id IN ('PK0001', ...)" or "WHERE material_category IN ('Packaging Material', .....)" OR material_description LIKE '%Pet bottle%'",
+                    "date_filter": "WHERE order_date = '2025-10-08'" or "",
+                    "ignore_shortfall_check": true/false
+                }},
+                "natural_language_scope": "PO for order ORD-123 only",
+                "confidence": 0.0-1.0
+                }}
+
+                **Examples:**
+
+                Query: "Generate PO for order ORD-123"
+                → intent_type: "specific_orders", order_numbers: ["ORD-123"], order_filter: "WHERE order_number = 'ORD-123'"
+
+                Query: "Create PO for 100 units of material PK0001"
+                → po_mode: "direct_materials", intent_type: "direct_purchase"
+                → material_ids: ["PK0001"], quantities_specified: {{"PK0001": 100}}
+                → ignore_shortfall_check: true
+
+                Query: "I need PO for packaging materials PK0001 and PK0003, 500 each"
+                → po_mode: "direct_materials", intent_type: "direct_purchase"
+                → material_ids: ["PK0001", "PK0003"], quantities_specified: {{"PK0001": 500, "PK0003": 500}}
+
+                Query: "Generate PO for shortfall plus add 200 units of PK0005"
+                → po_mode: "mixed", intent_type: "specific_materials"
+                → quantities_specified: {{"PK0005": 200}}  // Extra materials beyond shortfall
+
+                Query: "Create PO for SKU001 and SKU002"
+                → intent_type: "specific_skus", sku_ids: ["SKU001", "SKU002"], sku_filter: "WHERE sku_id IN ('SKU001', 'SKU002')"
+
+                Query: "I need PO for packaging materials PK0001"
+                → intent_type: "specific_materials", material_ids: ["PK0001"], material_filter: "WHERE material_id = 'PK0001'"
+
+                Query: "Generate PO for today's shortfall"
+                → intent_type: "all", date_mentioned: "{order_date}", (no specific filters, use all shortfalls)
+
+                Query: "Generate PO for this" (after previous message about "order ORD-456 has shortfall")
+                → refers_to_previous: true, referenced_entity: "order", referenced_values: ["ORD-456"]
+
+                Query: "Make PO for 100 units of Pet bottle"
+                → po_mode: "direct_materials", intent_type: "direct_purchase"
+                → material_descriptions: ["Pet bottle"], quantities_specified: {{"Pet bottle": 100}}
+                → material_filter: "WHERE material_description LIKE '%Pet bottle%' OR matdesc LIKE '%Pet bottle%'"
+
+                Query: "I need 500 bottle caps and 300 labels"
+                → po_mode: "direct_materials", intent_type: "direct_purchase"
+                → material_descriptions: ["bottle caps", "labels"]
+                → quantities_specified: {{"bottle caps": 500, "labels": 300}}
+
+                **Important:**
+                - If user provides material description (not ID), extract it to material_descriptions
+                - Build material_filter to search by BOTH material_id and material_description
+                """
+
+            response = await self.client.chat.completions.create(
+                model=self.nlp_llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+            
+            intent = json.loads(response.choices[0].message.content)
+            
+            logger.info(f"✅ Extracted Intent:")
+            logger.info(f"   Type: {intent.get('intent_type')}")
+            logger.info(f"   Entities: {intent.get('extracted_entities')}")
+            logger.info(f"   Scope: {intent.get('natural_language_scope')}")
+            
+            return intent
+            
+        except Exception as e:
+            logger.error(f"Intent extraction failed: {e}")
+            # Fallback: treat as "all" with no filters
+            return {
+                "po_mode": "shortfall_driven",
+                "intent_type": "all",
+                "extracted_entities": {
+                    "order_numbers": [],
+                    "sku_ids": [],
+                    "material_ids": [],
+                    "material_category":[],
+                    "material_descriptions": [],
+                    "quantities_specified": {},
+                    "date_mentioned": None
+                },
+                "filters_to_apply": {
+                    "order_filter": "",
+                    "sku_filter": "",
+                    "material_filter": "",
+                    "date_filter": "",
+                    "ignore_shortfall_check": False
+                },
+                "natural_language_scope": "All shortfalls for the specified date",
+                "confidence": 0.5
+            }
+        
+    async def _step_direct_material_lookup(
+        self,
+        user_id: int,
+        project_id: str,
+        user_intent: Dict[str, Any],
+        business_rules: Dict[str, Any],
+
+    ) -> Dict:
+        """
+        Fetch material details for user-specified materials (no shortfall check)
+        Used when user says: "Create PO for 100 units of PK0001"
+        """
+        try:
+            analysis_query = f"""
+                User wants to create PO for specific materials (not based on shortfall).
+
+                **What User Requested (extracted from their query):**
+                {json.dumps(user_intent.get("extracted_entities", {}), indent=2)}
+
+                **Filters to Apply:**
+                {json.dumps(user_intent.get("filters_to_apply", {}), indent=2)}
+
+                **Scope of user Query:**
+                {user_intent.get("natural_language_scope","")}
+
+
+                **Business Rules (for conversions):**
+                {json.dumps(business_rules, indent=2)}
+
+                **Your Task:**
+                Determine what materials are needed and fetch them with vendor details.
+
+                **Important Rules:**
+                1. If material_ids provided → Fetch those materials directly
+                2. If sku_ids provided → Convert SKUs to materials using BOM (use SKU conversion factors like bottles_per_case, then find SKU BOM for materials)
+                3. If order_numbers provided → Find SKUs in those orders, then convert to materials
+                4. If material_category provided → Get all materials in that category
+                5. If quantities_specified → Use those quantities (with conversions if needed)
+                6. DO NOT hardcode conversions - query from database
+                7. If not specified, choose vendor with least lead time
+
+                **Must return:**
+                - material_id, material_description, material_category
+                - calculated_quantity (after any conversions)
+                - vendor_id, vendor_name, vendor_email_id
+                - cost_per_single_unit, lead_time
+                - werks, lgort
+
+                **Example for SKU conversion:**
+                If user wants "100 cases of SKU001":
+                - Find sku specifications to find bottles_per_case
+                - find materials per bottle
+                - Calculate: material_qty = 100 * bottles_per_case 
+
+                Generate SQL query that handles this intelligently based on what's in extracted_entities.
+
+                Return one row per material-vendor combination.
+                """
+            
+            from app.services.rag_sql_service import rag_sql_service
+            
+            query_embedding = await rag_sql_service.embed_query(analysis_query)
+            relevant_data = await rag_sql_service.retrieve_relevant_data(
+                query_embedding, user_id, project_id,
+                top_k=self.top_k, similarity_threshold=self.similarity_threshold
+            )
+            
+            sql_result = await rag_sql_service.generate_sql_response(
+                analysis_query, relevant_data, []
+            )
+            
+            if not sql_result.get("query_result", {}).get("success"):
+                return {"has_materials": False, "error": "Could not fetch material details"}
+            
+            material_data = sql_result["query_result"]["data"]
+            
+            # Process and add user-specified quantities
+            materials_with_quantities = []
+            for row in material_data:
+                material_id = row.get("material_id") or row.get("matnr")
+                quantity = row.get("calculated_quantity") or row.get("required_quantity") or 0
+                unit_cost = float(row.get("cost_per_single_unit", 0))
+                
+                materials_with_quantities.append({
+                    "material_id": material_id,
+                    "material_description": row.get("material_description") or row.get("matdesc"),
+                    "material_category": row.get("material_category") or row.get("matcat"),
+                    "shortfall_quantity": float(quantity) if quantity else 0,
+                    "vendor_id": row.get("vendor_id"),
+                    "vendor_name": row.get("vendor_name"),
+                    "vendor_email_id": row.get("vendor_email_id") or row.get("vendor_email"),
+                    "cost_per_single_unit": unit_cost,
+                    "total_procurement_cost": float(quantity) * unit_cost if quantity else 0,
+                    "lead_time": int(row.get("lead_time", 0)),
+                    "werks": row.get("werks"),
+                    "lgort": row.get("lgort"),
+                    "order_number": "",
+                    "source": "direct_user_request"
+                })
+            
+            logger.info(f"✅ Fetched {len(materials_with_quantities)} materials from user request")
+            
+            return {
+                "has_materials": len(materials_with_quantities) > 0,
+                "materials": materials_with_quantities,
+                "total_materials": len(materials_with_quantities),
+                "source": "direct_user_request"
+            }
+            
+        except Exception as e:
+            logger.error(f"Direct material lookup error: {e}")
+            return {"has_materials": False, "error": str(e)}
+
     async def _execute_workflow_steps(
         self, 
         workflow_id: str, 
         user_id: int, 
         project_id: str, 
         order_date: str,
-        trigger_query: str = None
+        trigger_query: str,
+        conversation_context: str,
+        business_rules: Dict[str, Any],
+        user_intent: str
     ):
         """Execute the complete PO workflow in background"""
         
         try:
-            # Step 1: Check SKU shortfall
-            await manager.notify_workflow_progress(project_id, workflow_id, "Step 1", "Checking SKU shortfall...")
-            await db.update_workflow(
-                    workflow_id=workflow_id, 
-                    step=1, 
-                    status='running', 
-                    results={"current_step": "Checking SKU shortfall", "step_name": "step_1"}, 
-                    error=None
-                )
-            
-            sku_result = await self._step1_check_sku_shortfall(user_id, project_id, order_date, trigger_query)
-            
-            if not sku_result.get("has_shortfall", False):
-                await db.update_workflow(
-                    workflow_id=workflow_id, 
-                    step=1, 
-                    status='completed', 
-                    results={
-                        **sku_result, 
-                        "step_name": "step_1_completed",
-                        "message": "No SKU shortfall found"
-                    }, 
-                    error=None
-                )
-                await manager.notify_workflow_complete(project_id, workflow_id, "No SKU shortfall found. No PO needed.")
-                return
-            
-            # Step 2: Check material shortfall
-            await manager.notify_workflow_progress(project_id, workflow_id, "Step 2", "Analyzing material shortfalls for production requirements...")
-            await db.update_workflow(
-                workflow_id=workflow_id, 
-                step=2, 
-                status='running', 
-                results={
-                    "current_step": "Analyzing packaging and material requirements", 
-                    "step_name": "step_2",
-                    "sku_shortfalls_found": len(sku_result.get("sku_shortfalls", []))
-                }, 
-                error=None
-            )
-            
-            material_result = await self._step2_check_packaging_shortfall(
-                user_id, project_id, order_date, sku_result["sku_shortfalls"]
-            )
+            po_mode = user_intent.get("po_mode", "shortfall_driven")
 
-            if not material_result.get("has_shortfall", False):
+            if po_mode == "direct_materials":
+                # User specified materials directly - skip shortfall checks
+                logger.info("📦 Direct Material PO Mode - Skipping shortfall checks")
+                
+                await manager.notify_workflow_progress(
+                    project_id, workflow_id, "Step 1",
+                    "Fetching specified materials..."
+                )
+                
+                # Fetch material details directly
+                material_result = await self._step_direct_material_lookup(
+                    user_id, project_id, user_intent, business_rules
+                )
+                
+                if not material_result.get("has_materials"):
+                    await db.update_workflow(
+                        workflow_id=workflow_id, step=1, status='failed',
+                        results=material_result, error="Could not find specified materials"
+                    )
+                    await manager.notify_workflow_error(
+                        project_id, workflow_id,
+                        "Could not find the materials you specified"
+                    )
+                    return
+                
+                # Group materials by vendor
+                vendor_grouped = defaultdict(list)
+                for material in material_result["materials"]:
+                    vendor_key = f"{material['vendor_id']}_{material.get('werks', 'default')}_{material.get('lgort', 'default')}"
+                    vendor_grouped[vendor_key].append(material)
+                
+                procurement_result = {
+                    "vendor_options": material_result["materials"],
+                    "vendor_grouped": dict(vendor_grouped),
+                    "total_procurement_cost": sum(m["total_procurement_cost"] for m in material_result["materials"]),
+                    "unique_vendors": len(vendor_grouped)
+                }
+                
+                order_numbers = []  # No orders for direct materials
+            elif po_mode == "mixed":
+                # Get shortfall materials + add user-specified extras
+                logger.info("🔀 Mixed Mode - Checking shortfall + adding specified materials")
+                
+                # Step 1: Check SKU shortfall (existing logic)
+                sku_result = await self._step1_check_sku_shortfall(
+                    user_id, project_id, order_date, trigger_query,
+                    conversation_context, business_rules, user_intent
+                )
+                
+                # Step 2: Check material shortfall (existing logic)
+                material_shortfall = await self._step2_check_material_shortfall(
+                    user_id, project_id, order_date, sku_result.get("sku_shortfalls", []),
+                    conversation_context, business_rules, user_intent, trigger_query
+                )
+                
+                # Step 2.5: ✅ Add user-specified materials
+                direct_materials = await self._step_direct_material_lookup(
+                    user_id, project_id, user_intent, business_rules
+                )
+                
+                # Merge both lists
+                all_materials = (material_shortfall.get("material_shortfalls", []) +
+                            direct_materials.get("materials", []))
+                
+                # Step 3: Get vendors for all materials
+                procurement_result = await self._step3_get_procurement_costs(
+                    user_id, project_id, order_date, all_materials,
+                    conversation_context, business_rules, trigger_query, user_intent
+                )
+                
+                order_numbers = sku_result.get("order_numbers", [])
+            else:
+                # Step 1: Check SKU shortfall
+                await manager.notify_workflow_progress(project_id, workflow_id, "Step 1", "Checking SKU shortfall...")
+                await db.update_workflow(
+                        workflow_id=workflow_id, 
+                        step=1, 
+                        status='running', 
+                        results={"current_step": "Checking SKU shortfall", "step_name": "step_1"}, 
+                        error=None
+                    )
+                
+                sku_result = await self._step1_check_sku_shortfall(user_id, project_id, order_date, trigger_query, conversation_context, business_rules, user_intent)
+                
+                if not sku_result.get("has_shortfall", False):
+                    await db.update_workflow(
+                        workflow_id=workflow_id, 
+                        step=1, 
+                        status='completed', 
+                        results={
+                            **sku_result, 
+                            "step_name": "step_1_completed",
+                            "message": "No SKU shortfall found"
+                        }, 
+                        error=None
+                    )
+                    await manager.notify_workflow_complete(project_id, workflow_id, "No SKU shortfall found. No PO needed.")
+                    return
+                
+                # Step 2: Check material shortfall
+                await manager.notify_workflow_progress(project_id, workflow_id, "Step 2", "Analyzing material shortfalls for production requirements...")
                 await db.update_workflow(
                     workflow_id=workflow_id, 
                     step=2, 
-                    status='completed', 
+                    status='running', 
                     results={
-                        **material_result, 
-                        "step_name": "step_2_completed",
-                        "message": "No material shortfall found"
+                        "current_step": "Analyzing material requirements", 
+                        "step_name": "step_2",
+                        "sku_shortfalls_found": len(sku_result.get("sku_shortfalls", []))
                     }, 
                     error=None
                 )
-                await manager.notify_workflow_complete(project_id, workflow_id, "No material shortfall found.")
-                return
-            
-            #  Step 3: Get procurement cost with vendor details
-            await manager.notify_workflow_progress(project_id, workflow_id, "Step 3", "Getting procurement costs from vendors...")
-            await db.update_workflow(
-                workflow_id=workflow_id, 
-                step=3, 
-                status='running', 
-                results={
-                    "current_step": "Calculating procurement costs and vendor options", 
-                    "step_name": "step_3",
-                    "materials_with_shortfall": len(material_result.get("packaging_shortfalls", []))
-                }, 
-                error=None
-            )
-            
-            procurement_result = await self._step3_get_procurement_costs(
-                user_id, project_id, order_date, material_result["packaging_shortfalls"]
-            )
-            
+                
+                material_result = await self._step2_check_material_shortfall(
+                    user_id, project_id, order_date, sku_result["sku_shortfalls"], trigger_query, conversation_context, business_rules, user_intent
+                )
+
+                if not material_result.get("has_shortfall", False):
+                    await db.update_workflow(
+                        workflow_id=workflow_id, 
+                        step=2, 
+                        status='completed', 
+                        results={
+                            **material_result, 
+                            "step_name": "step_2_completed",
+                            "message": "No material shortfall found"
+                        }, 
+                        error=None
+                    )
+                    await manager.notify_workflow_complete(project_id, workflow_id, "No material shortfall found.")
+                    return
+                
+                #  Step 3: Get procurement cost with vendor details
+                await manager.notify_workflow_progress(project_id, workflow_id, "Step 3", "Getting procurement costs from vendors...")
+                await db.update_workflow(
+                    workflow_id=workflow_id, 
+                    step=3, 
+                    status='running', 
+                    results={
+                        "current_step": "Calculating procurement costs and vendor options", 
+                        "step_name": "step_3",
+                        "materials_with_shortfall": len(material_result.get("material_shortfalls", []))
+                    }, 
+                    error=None
+                )
+                
+                procurement_result = await self._step3_get_procurement_costs(
+                    user_id, project_id, order_date, material_result["material_shortfalls"], trigger_query, conversation_context, business_rules, user_intent
+                )
+                order_numbers = sku_result.get("order_numbers", [])
+                
             if not procurement_result.get("vendor_options"):
                 await db.update_workflow(
                     workflow_id=workflow_id, 
@@ -170,13 +636,13 @@ class POWorkflowService:
                     status='failed', 
                     results={
                         "step_name": "step_3_failed",
-                        "materials_checked": len(material_result.get("packaging_shortfalls", []))
+                        "materials_checked": len(material_result.get("material_shortfalls", []))
                     }, 
-                    error="No vendors found for packaging materials"
+                    error="No vendors found for materials"
                 )
-                await manager.notify_workflow_error(project_id, workflow_id, "No vendors available for required packaging materials")
+                await manager.notify_workflow_error(project_id, workflow_id, "No vendors available for required materials")
                 return
-            
+                
             # Step 4: Generate POs
             await manager.notify_workflow_progress(project_id, workflow_id, "Step 4", "Generating purchase orders...")
             await db.update_workflow(
@@ -192,9 +658,10 @@ class POWorkflowService:
                 }, 
                 error=None
             )
-            
+                
+        
             po_result = await self._step4_generate_pos_from_procurement(
-                user_id, project_id, order_date, workflow_id, procurement_result["vendor_grouped"], sku_result["order_numbers"]
+                user_id, project_id, order_date, workflow_id, procurement_result["vendor_grouped"], order_numbers, conversation_context, business_rules
             )
             if not po_result.get("success", False):
                 error_message = po_result.get("error", "Unknown error in PO generation")
@@ -262,7 +729,7 @@ class POWorkflowService:
                 error=None
             )
             if po_result.get("pos_generated"):
-                email_result = await self._step5_process_emails_and_approvals(po_result["pos_generated"])
+                email_result = await self._step5_process_emails_and_approvals(po_result["pos_generated"], business_rules, conversation_context)
             else:
                 # No POs generated - mark as failed
                 await db.update_workflow(
@@ -284,11 +751,10 @@ class POWorkflowService:
                 return
             # Complete workflow
             final_result = {
+                "po_mode": po_mode,
                 "workflow_completed": True,
                 "step_name": "workflow_completed",
                 "summary": {
-                    "skus_with_shortfall": len(sku_result.get("sku_shortfalls", [])),
-                    "packaging_materials_with_shortfall": len(material_result.get("packaging_shortfalls", [])),
                     "pos_generated": len(po_result.get("pos_generated", [])),
                     "total_procurement_cost": po_result.get("total_procurement_value", 0),
                     "vendors_involved": len(set(po["vendor_id"] for po in po_result.get("pos_generated", []))),
@@ -307,6 +773,28 @@ class POWorkflowService:
                 results=final_result, 
                 error=None
             )
+            # pos_count = len(po_result["pos_generated"])
+            # total_value = sum(po["total_amount"] for po in po_result["pos_generated"])
+
+            # if po_mode == "direct_materials":
+            #     completion_msg = f"""✅ **POs Generated Successfully**
+
+            #         Created {pos_count} purchase order(s) for your specified materials.
+
+            #         **Total Value:** ${total_value:,.2f}
+            #         **Mode:** Direct Material Purchase
+
+            #         Check the sidebar for PO details and approval status."""
+            # else:
+            #     completion_msg = f"""✅ **POs Generated Successfully**
+
+            #         Created {pos_count} purchase order(s) for shortfall materials on {order_date}.
+
+            #         **Total Value:** ${total_value:,.2f}
+            #         **Orders Covered:** {len(order_numbers)} order(s)
+
+            #         Check the sidebar for PO details and approval status."""
+                
             await manager.notify_workflow_complete(
                 project_id, 
                 workflow_id, 
@@ -334,33 +822,53 @@ class POWorkflowService:
             )
             await manager.notify_workflow_error(project_id, workflow_id, str(e))
 
-    async def _step1_check_sku_shortfall(self, user_id: int, project_id: str, order_date: str, trigger_query: str = None) -> Dict:
+    async def _step1_check_sku_shortfall(self, user_id: int, project_id: str, order_date: str, conversation_context: str,
+        business_rules: Dict[str, Any], trigger_query: str = None, user_intent: Dict[str, Any] = None ) -> Dict:
         """Step 1: Check SKU shortfall using RAG service"""
         try:
-            # Build query for SKU shortfall analysis
-            # if trigger_query:
-            #     analysis_query = f"Based on the query '{trigger_query}', analyze SKU shortfall for order date {order_date}"
-            # else:
-            #     analysis_query = f"""
-            #     Are there enough at-hand stock (as at_hand_stock) of SKU to fulfill order for date '{order_date}'?
-            #     If the at-hand stock of SKU is not sufficient, return the additional cases of SKU to be produced (as sku_shortfall_count).
-            #     Include order number (as order_number) and return sku_shortfall_count with details of each SKU shortfall.
-            #     """
-            query = """Are there enough at hand stock (as at_hand_stock) of SKU to fulfill order for date '{order_date}'?
+            intent_scope = user_intent.get('natural_language_scope', '') if user_intent else ''
+            filters = user_intent.get('filters_to_apply', {}) if user_intent else {}
+            
+            # Base query
+            base_query = f""" If query is related to shortfall, check if there are enough at hand stock of SKU to fulfill order for date '{order_date}'
                 If the at hand stock (as at_hand_stock) of SKU is not sufficient, then return the additional cases i.e., required - at hand stock, of SKU to be produced (as sku_shortfall_count)
                 Include order number (as order_number) and return sku_shortfall_count with details of each SKU shortfall also the order quantity (as sku_order_quantity).
                 Return only rows where sku_shortfall_count > 0
-                If no shortfall exists, return empty result.""".format(order_date=order_date)
+                If no shortfall exists, return empty result."""
             
+            if user_intent and user_intent.get('intent_type') != 'all':
+                intent_type = user_intent.get('intent_type')
+                entities = user_intent.get('extracted_entities', {})
+                
+                if intent_type == 'specific_orders' and entities.get('order_numbers'):
+                    order_list = "', '".join(entities['order_numbers'])
+                    base_query += f"\n\n**FILTER: Check only for order numbers: {order_list}**"
+                    base_query += f"\nAdd WHERE clause: {filters.get('order_filter', '')}"
+                
+                elif intent_type == 'specific_skus' and entities.get('sku_ids'):
+                    sku_list = "', '".join(entities['sku_ids'])
+                    base_query += f"\n\n**FILTER: Check only for SKUs: {sku_list}**"
+                    base_query += f"\nAdd WHERE clause: {filters.get('sku_filter', '')}"
+                
+                elif intent_type == 'date_range' and entities.get('date_range'):
+                    date_range = entities['date_range']
+                    base_query += f"\n\n**FILTER: Check for date range: {date_range['start']} to {date_range['end']}**"
+                    base_query = base_query.replace(f"date '{order_date}'", 
+                        f"date BETWEEN '{date_range['start']}' AND '{date_range['end']}'")
+        
+            # Build final analysis query
             if trigger_query:
                 analysis_query = f"""
                     Based on the user query: '{trigger_query}'
-                    
-                    I need to check: {query}
+                    {intent_scope}
+                    Business Rules available : {json.dumps(business_rules, indent=2)}
+                    Conversation History: {conversation_context}
+                    I need to check or modify as per user requirements (as per user query or conversation history) and business rules: {base_query} 
+
                     """
             else:
                 analysis_query = f"""
-                Step 1 of procurement workflow: {query}
+                Step 1 of procurement workflow: {base_query}
                 """
             from app.services.rag_sql_service import rag_sql_service
 
@@ -462,7 +970,8 @@ class POWorkflowService:
             )
         return "\n".join(summary_lines)
     
-    async def _step2_check_packaging_shortfall(self, user_id: int, project_id: str, order_date: str, sku_shortfalls: List[Dict]) -> Dict:
+    async def _step2_check_material_shortfall(self, user_id: int, project_id: str, order_date: str, sku_shortfalls: List[Dict], conversation_context: str,
+        business_rules: Dict[str, Any], user_intent: Dict[str, Any] = None, trigger_query: str = None) -> Dict:
         """
         Step 2: To fulfill sku_order_quantity, we fall short of sku_shortfall_count cases to fulfill order for date '<date>', 
         can we check how much is the shortfall of packaging materials required, by comparing with at hand?
@@ -473,33 +982,48 @@ class POWorkflowService:
         
         try:
             sku_shortfall_summary = self._build_sku_shortfall_summary(sku_shortfalls)
+
+            intent_context = ""
+            if user_intent and user_intent.get('intent_type') == 'specific_materials':
+                material_ids = user_intent.get('extracted_entities', {}).get('material_ids', [])
+                material_cat = user_intent.get('extracted_entities', {}).get('material_category', [])
+                if material_ids:
+                    material_list = "', '".join(material_ids)
+                    intent_context = f"\n\n**User specifically requested material IDs: {material_list}**\nFocus on these materials only."
+                if material_cat:
+                    material_cat_list = "', '".join(material_cat)
+                    intent_context = f"\n\n**User specifically requested these material category: {material_cat_list}**\nFocus on these materials only, If it's all, consider all the material categories without any filtering."
+
             analysis_query = f"""
             Step 2 of procurement workflow:
-            
+            User Query: {trigger_query}
+            Business Rules Available :{json.dumps(business_rules, indent=2)}
+            Conversation History: {conversation_context}
             SKUs with shortfalls and order quantity:
             {sku_shortfall_summary}
-            To fulfill order for date '{order_date}', check how much is the shortfall of packaging materials required, by comparing with at hand stock?
-
+            To fulfill order for date '{order_date}', check how much is the shortfall of materials required, by comparing with at hand stock?
+            {intent_context}
             I need to:
-            1. Determine packaging materials required for these SKU shortfalls
-            2. Compare required packaging materials with at hand stock
-            3. Calculate shortfall of packaging materials as packagingMaterial_shortfall_count
-            4. Filter by packaging material only
-            5. Return rows where packagingMaterial_shortfall_count > 0
+            1. Determine specified materials required for these SKU shortfalls
+            2. Compare required materials with at hand stock
+            3. Calculate shortfall of materials as material_shortfall_count
+            4. Filter by specified materials only
+            5. Return rows where material_shortfall_count > 0
+            6. Check Business rules for any specified related to this step
+            7. Check conversation history for any specific filtering based on previous queries and content
             
             Return format:
-            - matnr (packaging material identifier)
+            - matnr (material identifier)
             - matdesc (material description)
             - material_category (e.g., packaging_material)
             - required_quantity (needed for SKU production)
             - at_hand_stock (current available stock)
-            - packagingMaterial_shortfall_count (required - at hand, only if > 0)
+            - material_shortfall_count (required - at hand, only if > 0)
             - werks (plant)
             - lgort (storage location)
             - used_for_skus (which SKUs this material is needed for)
             
-            Filter by packaging material only.
-            Return rows where packagingMaterial_shortfall_count > 0.
+            Return rows where material_shortfall_count > 0.
             """
 
             # analysis_query = f"""
@@ -522,11 +1046,11 @@ class POWorkflowService:
             )
             
             if not sql_result.get("query_result", {}).get("success"):
-                return {"has_shortfall": False, "error": "Could not analyze packaging material shortfall"}
+                return {"has_shortfall": False, "error": "Could not analyze material shortfall"}
             
-            # Process packaging material shortfall data
-            packaging_data = sql_result["query_result"]["data"]
-            return await self._process_step2_packaging_shortfall_data(packaging_data)
+            # Process material shortfall data
+            material_data = sql_result["query_result"]["data"]
+            return await self._process_step2_material_shortfall_data(material_data)
             
             # shortfall_data = sql_result["query_result"]["data"]
             # shortfall_materials = []
@@ -556,13 +1080,13 @@ class POWorkflowService:
             logger.error(f"Step 2 error: {e}")
             return {"has_shortfall": False, "error": str(e)}
         
-    async def _process_step2_packaging_shortfall_data(self, packaging_data: List[Dict]) -> Dict:
-        """Process Step 2 packaging material shortfall data"""
+    async def _process_step2_material_shortfall_data(self, material_data: List[Dict]) -> Dict:
+        """Process Step 2 material shortfall data"""
         
         try:
-            packaging_shortfalls = []
+            material_shortfalls = []
 
-            for row in packaging_data:
+            for row in material_data:
                 material_id = (row.get("material_id") or row.get("matnr") or "UNKNOWN")
                 material_desc = (row.get("material_description") or row.get("matdesc") or "")
                 material_cat = (row.get("material_category") or row.get("matcat") or "")
@@ -570,8 +1094,8 @@ class POWorkflowService:
                 required_qty = (row.get("required_quantity") or 0)
                 at_hand = (row.get("at_hand_stock") or row.get("stock_quantity") or 0)
 
-                # packagingMaterial_shortfall_count is the alias for packaging material shortfall
-                packaging_shortfall_count = (row.get("packagingmaterial_shortfall_count") or
+                # material_shortfall_count is the alias for  material shortfall
+                material_shortfall_count = (row.get("material_shortfall_count") or
                                            row.get("shortfall_quantity") or
                                            max(0, required_qty - at_hand))
 
@@ -579,46 +1103,47 @@ class POWorkflowService:
                 lgort = row.get("lgort", "")
                 used_for_skus = row.get("used_for_skus", "")
 
-                # Only include if packagingMaterial_shortfall_count > 0 and is packaging material
-                if (packaging_shortfall_count > 0 and
-                    "packaging" in material_cat.lower()):
+                # Only include if material_shortfall_count > 0 and is packaging material
+                # if (material_shortfall_count > 0 and
+                #     "packaging" in material_cat.lower()):
 
-                    packaging_shortfalls.append({
-                        "material_id": material_id,
-                        "material_description": material_desc,
-                        "material_category": material_cat,
-                        "required_quantity": required_qty,
-                        "at_hand_stock": at_hand,
-                        "packagingMaterial_shortfall_count": packaging_shortfall_count,  # Exact field name
-                        "werks": werks,
-                        "lgort": lgort,
-                        "used_for_skus": used_for_skus
-                    })
+                material_shortfalls.append({
+                    "material_id": material_id,
+                    "material_description": material_desc,
+                    "material_category": material_cat,
+                    "required_quantity": required_qty,
+                    "at_hand_stock": at_hand,
+                    "material_shortfall_count": material_shortfall_count,  # Exact field name
+                    "werks": werks,
+                    "lgort": lgort,
+                    "used_for_skus": used_for_skus
+                })
 
             return {
-                "has_shortfall": len(packaging_shortfalls) > 0,
-                "packaging_shortfalls": packaging_shortfalls,
-                "total_packaging_materials_with_shortfall": len(packaging_shortfalls),
+                "has_shortfall": len(material_shortfalls) > 0,
+                "material_shortfalls": material_shortfalls,
+                "total_materials_with_shortfall": len(material_shortfalls),
                 "step2_sql_executed": True
             }
 
         except Exception as e:
-            logger.error(f"Error processing Step 2 packaging shortfall data: {e}")
+            logger.error(f"Error processing Step 2 material shortfall data: {e}")
             return {"has_shortfall": False, "error": str(e)}
         
-    def _build_packaging_shortfall_summary(self, packaging_shortfalls: List[Dict]) -> str:
-        """Build summary of packaging material shortfalls for Step 3"""
+    def _build_material_shortfall_summary(self, material_shortfalls: List[Dict]) -> str:
+        """Build summary of material shortfalls for Step 3"""
         summary_lines = []
-        for material in packaging_shortfalls:
+        for material in material_shortfalls:
             summary_lines.append(
                 f"- Material: {material['material_id']} ({material['material_description']}) ({material['material_category']}) "
-                f"shortfall: {material['packagingMaterial_shortfall_count']} units "
+                f"shortfall: {material['material_shortfall_count']} units "
                 f"at {material['werks']}/{material['lgort']} "
                 f"for SKUs {material['used_for_skus']}"
             )
         return "\n".join(summary_lines)
     
-    async def _step3_get_procurement_costs(self, user_id: int, project_id: str, order_date: str, packaging_shortfalls: List[Dict]) -> Dict:
+    async def _step3_get_procurement_costs(self, user_id: int, project_id: str, order_date: str, material_shortfalls: List[Dict], conversation_context: str,
+        business_rules: Dict[str, Any], trigger_query: str = None, user_intent: Dict[str, Any] = None) -> Dict:
         """
         Step 3: OK now that we have identified packaging material shortfall units to fulfill order for date '<date>', 
         give me the procurement cost based on least price from vendors. Include vendor email id and order number.
@@ -626,37 +1151,43 @@ class POWorkflowService:
         
         try:
             # Build exact workflow step 3 query
-            packaging_shortfall_summary = self._build_packaging_shortfall_summary(packaging_shortfalls)
+            material_shortfall_summary = self._build_material_shortfall_summary(material_shortfalls)
             
             analysis_query = f"""
             Step 3 of procurement workflow:
+            User Query: {trigger_query}
+            User Intent Scope: {user_intent.get("natural_language_scope","")}
+            Business Rules Available: {json.dumps(business_rules, indent=2)}
+            Conversation Context: {conversation_context},
+
+            Now that we have identified material shortfall units to fulfill order for date '{order_date}', give the procurement cost based on least price and lead time from vendors. Include vendor details and order number.
             
-            OK now that we have identified packaging material shortfall units to fulfill order for date '{order_date}', give the procurement cost based on least price and lead time from vendors. Include vendor details and order number.
-            
-            Packaging materials with shortfall:
-            {packaging_shortfall_summary}
+            Materials with shortfall:
+            {material_shortfall_summary}
             
             I need to:
-            1. Find vendors for each packaging material with shortfall
-            2. Get procurement cost based on least price from vendors
+            1. Check if vendors specified by user or find vendors for each material with shortfall
+            2. If not specified in rules and query, select vendors with least lead time for each material.
+            2. Get procurement cost based on cost per unit price from vendors
             3. Include vendor email id
             4. Include order number (from original orders)
+            5. Extract rules from business logic for any specific instructions to consider
+            6. Extract information from conversation history, for any specific filtering
             
             Return format:
             - material_id
             - material_description
-            - shortfall_quantity (packagingMaterial_shortfall_count)
+            - shortfall_quantity (material_shortfall_count)
             - vendor_id
             - vendor_name
             - vendor_email_id (vendor email)
-            - cost_per_single_unit (least price)
+            - cost_per_single_unit
             - total_procurement_cost (shortfall_quantity * cost_per_single_unit)
-            - lead_time
+            - lead_time 
             - werks
             - lgort
             - order_number (related order numbers)
             
-            Select vendors with least price and least lead time for each material.
             Include vendor email id and order number as requested.
             """
             from app.services.rag_sql_service import rag_sql_service
@@ -676,20 +1207,20 @@ class POWorkflowService:
             
             # Process vendor procurement data
             vendor_data = sql_result["query_result"]["data"]
-            return await self._process_step3_procurement_costs_data(vendor_data, packaging_shortfalls)
+            return await self._process_step3_procurement_costs_data(vendor_data, material_shortfalls)
             
         except Exception as e:
             logger.error(f"Step 3 error: {e}")
             return {"vendor_options": [], "error": str(e)}
         
-    async def _process_step3_procurement_costs_data(self, vendor_data: List[Dict], packaging_shortfalls: List[Dict]) -> Dict:
+    async def _process_step3_procurement_costs_data(self, vendor_data: List[Dict], material_shortfalls: List[Dict]) -> Dict:
         """Process Step 3 procurement costs data with vendor details"""
         
         try:
             vendor_options = []
             
-            # Create lookup for packaging shortfalls
-            shortfall_lookup = {material["material_id"]: material for material in packaging_shortfalls}
+            # Create lookup for shortfalls
+            shortfall_lookup = {material["material_id"]: material for material in material_shortfalls}
             
             for row in vendor_data:
                 material_id = (row.get("material_id") or row.get("matnr") or "")
@@ -701,12 +1232,12 @@ class POWorkflowService:
                         "material_id": material_id,
                         "material_description": shortfall_material["material_description"],
                         "material_category": shortfall_material["material_category"],
-                        "shortfall_quantity": shortfall_material["packagingMaterial_shortfall_count"],
+                        "shortfall_quantity": shortfall_material["material_shortfall_count"],
                         "vendor_id": row.get("vendor_id", ""),
                         "vendor_name": row.get("vendor_name", ""),
                         "vendor_email_id": row.get("vendor_email_id", ""),  # Exact field as per workflow
                         "cost_per_single_unit": float(row.get("cost_per_single_unit", 0)),
-                        "total_procurement_cost": float(row.get("total_procurement_cost", 0) or (shortfall_material["packagingMaterial_shortfall_count"] * float(row.get("cost_per_single_unit", 0)))),
+                        "total_procurement_cost": float(row.get("total_procurement_cost", 0) or (shortfall_material["material_shortfall_count"] * float(row.get("cost_per_single_unit", 0)))),
                         "lead_time": int(row.get("lead_time", 0)),
                         "werks": row.get("werks", ""),
                         "lgort": row.get("lgort", ""),
@@ -735,11 +1266,16 @@ class POWorkflowService:
         
     async def _step4_generate_pos_from_procurement(
         self, user_id: int, project_id: str, order_date: str, workflow_id: str, 
-        vendor_groups: Dict[str, List[Dict]], order_numbers: List[str]
+        vendor_groups: Dict[str, List[Dict]], order_numbers: List[str], conversation_context: List[Dict],
+        business_rules: Dict[str, Any]
     ) -> Dict:
         """Step 4: Generate POs from procurement cost analysis"""
         
         try:
+            approval_threshold = business_rules.get("approval_threshold", self.approval_threshold) if business_rules else self.approval_threshold
+        
+            logger.info(f"Using approval threshold: ${approval_threshold}")
+            logger.info(f"Source: {'Business Rules' if business_rules and 'approval_threshold' in business_rules else 'Default Config'}")
 
             pos_generated = []
             failed_vendors = []
@@ -848,7 +1384,7 @@ class POWorkflowService:
                         "tax": 0.0,  # Add tax if applicable
                         "shipping": 0.0,  # Add shipping if applicable  
                         "other_charges": 0.0,  # Add other charges if applicable
-                        "comments": f"Purchase order for packaging materials shortfall. Please deliver as per agreed timeline and specifications and ensure all items are properly packaged for shipping.",
+                        "comments": f"Purchase order for materials shortfall. Please deliver as per agreed timeline and specifications and ensure all items are properly packaged for shipping.",
                         
                         # Company details - these will be used by PDF generator
                         "company_details": {
@@ -926,7 +1462,7 @@ class POWorkflowService:
                                 "vendor_email": vendor_info["vendor_email_id"],
                                 "total_amount": total_amount,
                                 "status": "generated",  # Initial status
-                                "needs_approval": total_amount > self.approval_threshold,
+                                "needs_approval": total_amount > approval_threshold,
                                 "order_date": order_date_obj,
                                 "pdf_path": pdf_result["pdf_path"],  # From enhanced generator
                                 "created_at": datetime.now(),
@@ -949,7 +1485,7 @@ class POWorkflowService:
                                         "total_cost": material["total_procurement_cost"],
                                         "vendor_id": material["vendor_id"],
                                         "order_number": order_numbers,
-                                        "shortfall_reason": f"Packaging material shortfall for orders: {', '.join(order_numbers)}"
+                                        "shortfall_reason": f"Material shortfall for orders: {', '.join(order_numbers)}"
                                     })
                                 try:
                                     await db.insert_po_items(po_number, po_items)
@@ -961,13 +1497,13 @@ class POWorkflowService:
                                         "vendor_name": vendor_info["vendor_name"],
                                         "vendor_email": vendor_info["vendor_email_id"],
                                         "total_amount": total_amount,
-                                        "needs_approval": total_amount > self.approval_threshold,
+                                        "needs_approval": total_amount > approval_threshold,
                                         "pdf_path": pdf_result["pdf_path"],
                                         "pdf_filename": pdf_result["filename"],
                                         "materials_count": len(vendor_materials),
                                         "order_numbers": order_numbers,
                                         "generated_at": datetime.now().isoformat(),
-                                        "approval_threshold": self.approval_threshold,
+                                        "approval_threshold": approval_threshold,
                                         "status": "generated"
                                     })
                                 
@@ -1140,7 +1676,8 @@ class POWorkflowService:
         
         return "; ".join(summary_parts)
     
-    async def _step5_process_emails_and_approvals(self, pos_generated: List[Dict]):
+    async def _step5_process_emails_and_approvals(self, pos_generated: List[Dict], conversation_context: List[Dict],
+        business_rules: Dict[str, Any]):
         """Step 5: Process emails and approvals"""
         
         try:

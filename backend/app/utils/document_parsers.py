@@ -46,41 +46,24 @@ class DocumentParser:
             return None
         
     @staticmethod
-    async def check_existing_embedding(
+    async def check_existing_metadata_embedding(
         connection, 
         table_name: str,
-        document_id: str, 
+        # document_id: str, 
         user_id: int, 
         project_id: str, 
-        content_type: str, 
-        embedding_table: str
+        content_type: str
     ) -> Optional[Dict[str, Any]]:
         """Check if embedding already exists for this content type and document"""
         
-        # Build the query based on embedding table type
-        if embedding_table == "metadata_embeddings":
-            query = """
-            SELECT content, embedding, metadata, content_type
-            FROM metadata_embeddings 
-            WHERE document_id = $1 AND user_id = $2 AND project_id = $3 
-                  AND table_name = $4 AND content_type = $5
-            """
-            params = [document_id, user_id, project_id, table_name, content_type]
-        elif embedding_table == "business_logic_embeddings":
-            query = """
-            SELECT content, embedding, metadata 
-            FROM business_logic_embeddings 
-            WHERE document_id = $1 AND user_id = $2 AND project_id = $3
-            """
-            params = [document_id, user_id, project_id]
-        else:  # reference_embeddings
-            query = """
-            SELECT content, embedding, metadata 
-            FROM reference_embeddings 
-            WHERE document_id = $1 AND user_id = $2 AND project_id = $3
-            """
-            params = [document_id, user_id, project_id]
-        
+        query = """
+        SELECT content, embedding, metadata, content_type
+        FROM metadata_embeddings 
+        WHERE user_id = $1 AND project_id = $2 
+                AND table_name = $3 AND content_type = $4
+        """
+        # params = [document_id, user_id, project_id, table_name, content_type]
+        params = [user_id, project_id, table_name, content_type]
         try:
             row = await connection.fetchrow(query, *params)
             return dict(row) if row else None
@@ -372,19 +355,21 @@ class MetadataParser(DocumentParser):
                         "metadata_embeddings"
                     )
                     if existing_by_hash:
+                        # Update document_id to reflect latest upload
+                        await cls._refresh_document_id_for_hash(
+                            connection, document_id, user_id, project_id, content_hash
+                        )
                         stats["reused"] += 1
                         logger.info(f"Reused existing embedding for {table['name']}-{view['content_type']} (content unchanged)")
                         continue
 
                     # Check if embedding exists for the document specific
-                    existing_for_doc = await cls.check_existing_embedding(
+                    existing_for_doc = await cls.check_existing_metadata_embedding(
                         connection,
                         table["name"],
-                        document_id,
                         user_id, 
                         project_id,
-                        view["content_type"],
-                        "metadata_embeddings"
+                        view["content_type"]
                     )
                     
                     # Generate new embedding
@@ -471,7 +456,24 @@ class MetadataParser(DocumentParser):
             insert_query, document_id, project_id, user_id,
             table_name, content_type, content, embedding, json.dumps(metadata)
         )
-    
+    @staticmethod
+    async def _refresh_document_id_for_hash(
+        connection, document_id: str, user_id: int, project_id: str, content_hash: str
+    ):
+        """Update the document_id for an existing embedding with matching content hash"""
+        query = """
+        UPDATE metadata_embeddings
+        SET document_id = $1,
+            created_at = CURRENT_TIMESTAMP
+        WHERE user_id = $2 AND project_id = $3
+            AND metadata->>'content_hash' = $4
+        """
+        try:
+            await connection.execute(query, document_id, user_id, project_id, content_hash)
+            logger.info(f"Refreshed document_id for reused embedding with hash {content_hash[:10]}...")
+        except Exception as e:
+            logger.error(f"Error refreshing document_id for hash {content_hash[:10]}: {e}")
+
     @staticmethod
     async def _update_metadata_embedding(
         connection, document_id, user_id, project_id,
@@ -480,8 +482,8 @@ class MetadataParser(DocumentParser):
         """Update existing metadata embedding"""
         update_query = """
         UPDATE metadata_embeddings 
-        SET content = $1, embedding = $2::vector, metadata = $3, created_at = CURRENT_TIMESTAMP
-        WHERE document_id = $4 AND user_id = $5 AND project_id = $6 
+        SET content = $1, embedding = $2::vector, metadata = $3, document_id = $4, created_at = CURRENT_TIMESTAMP
+        WHERE user_id = $5 AND project_id = $6 
               AND table_name = $7 AND content_type = $8
         """
         # Debug logging
@@ -667,7 +669,6 @@ class BusinessLogicParser(DocumentParser):
             # Compact format: Rule1:, Policy5.
             r'(?:^|\n)\s*(?:Rule|Policy|Section|Item|Point|Step)(\d+)[\.\:]\s+(.+?)(?=(?:\n\s*(?:Rule|Policy|Section|Item|Point|Step)\d+[\.\:]|\Z))',
         ]
-        
         for pattern in universal_patterns:
             matches = list(re.finditer(pattern, text, flags=re.IGNORECASE | re.DOTALL))
             
@@ -676,12 +677,11 @@ class BusinessLogicParser(DocumentParser):
                 for match in matches:
                     rule_number = match.group(1)
                     content = match.group(2).strip()
-                    
                     # Clean content
                     content = re.sub(r'\s+', ' ', content)
                     content = re.sub(r'\n+', ' ', content)
                     
-                    if content and len(content) > 15:
+                    if content and len(content) > 10:
                         formatted_rule = f"Rule {rule_number}: {content}"
                         temp_rules.append(formatted_rule)
                 
@@ -750,13 +750,12 @@ class BusinessLogicParser(DocumentParser):
             paragraphs = text.split('\n\n')
             for para in paragraphs:
                 para = para.strip()
-                if not para or len(para) < 50:
+                if not para:
                     continue
                 
                 # Check if paragraph starts with any number pattern
                 if re.match(r'^\s*(?:\*\*\s*)?(?:(?:Rule|Policy|Section|Item|Point|Step)\s*)?\d+[\.\)\:]', para, re.IGNORECASE):
                     rules.append(para)
-        
         return rules
 
 
@@ -810,9 +809,19 @@ class BusinessLogicParser(DocumentParser):
                 )
                 
                 if existing_by_hash:
-                    stats["reused"] += 1
-                    logger.info(f"Reused existing business logic embedding for rule {rule_idx + 1}")
-                    continue
+                     # Case A: content identical, but maybe belongs to another document
+                    if existing_by_hash.get("document_id") != document_id:
+                        await cls._update_business_logic_document_id(
+                            connection,
+                            existing_by_hash["id"],
+                            document_id
+                        )
+                        stats["relinked"] += 1
+                        logger.info(f"Relinked existing embedding (rule {rule_idx + 1}) to new document ID {document_id}")
+                    else:
+                        stats["reused"] += 1
+                        logger.info(f"Reused existing business logic embedding for rule {rule_idx + 1}")
+                        continue
                 
                 # Check if embedding exists for this specific document+rule
                 existing_for_document = await cls._check_existing_business_logic_embedding(
@@ -892,11 +901,11 @@ class BusinessLogicParser(DocumentParser):
         query = """
         SELECT content, embedding, metadata 
         FROM business_logic_embeddings 
-        WHERE document_id = $1 AND user_id = $2 AND project_id = $3 AND rule_number = $4
+        WHERE user_id = $1 AND project_id = $2 AND rule_number = $3
         """
         
         try:
-            row = await connection.fetchrow(query, document_id, user_id, project_id, rule_number)
+            row = await connection.fetchrow(query, user_id, project_id, rule_number)
             return dict(row) if row else None
         except Exception as e:
             logger.error(f"Error checking existing business logic embedding: {e}")
@@ -929,8 +938,8 @@ class BusinessLogicParser(DocumentParser):
         """Update existing business logic embedding"""
         update_query = """
         UPDATE business_logic_embeddings 
-        SET content = $1, embedding = $2::vector, metadata = $3, created_at = CURRENT_TIMESTAMP
-        WHERE document_id = $4 AND user_id = $5 AND project_id = $6 AND rule_number = $7
+        SET content = $1, embedding = $2::vector, metadata = $3, document_id = $4, created_at = CURRENT_TIMESTAMP
+        WHERE user_id = $5 AND project_id = $6 AND rule_number = $7
         """
         # Debug logging
         logger.debug(f"Updating business logic embedding: rule={rule_number}")
@@ -939,6 +948,16 @@ class BusinessLogicParser(DocumentParser):
             update_query, content, embedding, json.dumps(metadata),
             document_id, user_id, project_id, rule_number
         )
+    @staticmethod
+    async def _update_business_logic_document_id(connection, row_id: str, new_document_id: str):
+        """Update the document_id for an existing embedding record"""
+        query = """
+        UPDATE business_logic_embeddings
+        SET document_id = $1, created_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+        """
+        await connection.execute(query, new_document_id, row_id)
+
 
 class ReferenceParser(DocumentParser):
     """Parser for reference documents with hash-based duplicate checking"""
@@ -1185,9 +1204,28 @@ class FileExtractor:
     
     @staticmethod
     def _extract_docx_text(file_content: bytes) -> str:
-        """Extract text from DOCX"""
+        # """Extract text from DOCX"""
+        # doc = Document(BytesIO(file_content))
+        # text = ""
+        # for paragraph in doc.paragraphs:
+        #     text += paragraph.text + "\n"
+        # return text
+        """Extract text from DOCX — includes numbered list values"""
         doc = Document(BytesIO(file_content))
-        text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
+        text_lines = []
+        list_counter = 1
+
+        for para in doc.paragraphs:
+            p_text = para.text.strip()
+            if not p_text:
+                continue
+
+            # Detect if this paragraph is part of a numbered/bulleted list
+            if para._p.pPr is not None and para._p.pPr.numPr is not None:
+                # It’s part of a numbered list → prepend visible number
+                text_lines.append(f"{list_counter}. {p_text}")
+                list_counter += 1
+            else:
+                text_lines.append(p_text)
+
+        return "\n".join(text_lines)

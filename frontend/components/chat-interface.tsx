@@ -71,6 +71,7 @@ interface SQLChatResponse {
     error?: string;
   };
   final_answer: string;
+  suggestion: string[]
   confidence: number;
   sample_data?: Array<Record<string, any>>;
   total_rows?: number;
@@ -88,11 +89,11 @@ interface SQLChatResponse {
     extracted_date: string;
     status: string;
   };
-  po_suggestion?: {
-    suggest_po: boolean;
-    reason: string;
-    suggestion_text: string;
-  };
+  // po_suggestion?: {
+  //   suggest_po: boolean;
+  //   reason: string;
+  //   suggestion_text: string;
+  // };
   po_workflow_started?: boolean;
 }
 
@@ -107,6 +108,7 @@ interface Message {
   intent?: string;
   confidence?: number;
   tables_used?: string[];
+  suggestion?: string[]; 
   business_rules_applied?: string[]; // New field
   reference_context?: string[]; // New field
   sample_data?: Array<Record<string, any>>;
@@ -114,7 +116,7 @@ interface Message {
   retrieval_stats?: SQLChatResponse["retrieval_stats"]; // New field
   context_sources?: string[]; // New field
   po_workflow?: SQLChatResponse["po_workflow"];
-  po_suggestion?: SQLChatResponse["po_suggestion"];
+  // po_suggestion?: SQLChatResponse["po_suggestion"];
   po_workflow_started?: boolean;
 }
 
@@ -665,12 +667,13 @@ const MessageBubble = ({
   // **NEW: PO Workflow Status Component**
   const POWorkflowDisplay = ({
     po_workflow,
-    po_suggestion,
+    // po_suggestion,
   }: {
     po_workflow?: SQLChatResponse["po_workflow"];
-    po_suggestion?: SQLChatResponse["po_suggestion"];
+    // po_suggestion?: SQLChatResponse["po_suggestion"];
   }) => {
-    if (!po_workflow && !po_suggestion) return null;
+    // if (!po_workflow && !po_suggestion) return null;
+    if (!po_workflow) return null;
 
     return (
       <div className="mt-3 space-y-2">
@@ -705,7 +708,7 @@ const MessageBubble = ({
         )}
 
         {/* PO Suggestion */}
-        {po_suggestion?.suggest_po && (
+        {/*po_suggestion?.suggest_po && (
           <div className="border rounded bg-amber-50 dark:bg-amber-900/20 border-amber-200">
             <div className="p-3">
               <div className="flex items-center gap-2 mb-2">
@@ -719,7 +722,7 @@ const MessageBubble = ({
               </div>
             </div>
           </div>
-        )}
+        )*/}
       </div>
     );
   };
@@ -752,6 +755,25 @@ const MessageBubble = ({
               <p className="text-sm leading-5 whitespace-pre-wrap break-words">
                 {message.content}
               </p>
+              {message.sender === "ai" && message.suggestion && message.suggestion.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <p className="text-sm text-muted-foreground font-medium">
+                    Would you like me to help with any of these next?
+                  </p>
+                  <div className="space-y-1.5">
+                    {message.suggestion.map((suggestion, index) => (
+                      <div
+                        key={index}
+                        className="flex items-start gap-2 text-sm text-foreground/80 pl-2 border-l-2 border-primary/20"
+                      >
+                        <span className="text-primary mt-0.5">•</span>
+                        <span>{suggestion}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
 
               {/* Enhanced Intent and Confidence Display */}
               {/* {message.sender === "ai" && (shouldShowIntent(message.intent) || shouldShowConfidence(message.confidence)) && (
@@ -798,7 +820,7 @@ const MessageBubble = ({
                   />
                   <POWorkflowDisplay
                     po_workflow={message.po_workflow}
-                    po_suggestion={message.po_suggestion}
+                    // po_suggestion={message.po_suggestion}
                   />
                 </div>
               )}
@@ -1189,6 +1211,7 @@ export function ChatInterface({
         intent: data.intent,
         confidence: data.confidence,
         tables_used: data.tables_used,
+        suggestion: data.suggestion,
         business_rules_applied: data.business_rules_applied, // New
         reference_context: data.reference_context, // New
         sample_data: data.sample_data,
@@ -1196,7 +1219,7 @@ export function ChatInterface({
         retrieval_stats: data.retrieval_stats, // New
         context_sources: data.context_sources, // New
         po_workflow: data.po_workflow,
-        po_suggestion: data.po_suggestion,
+        // po_suggestion: data.po_suggestion,
         po_workflow_started: data.po_workflow_started,
       };
 

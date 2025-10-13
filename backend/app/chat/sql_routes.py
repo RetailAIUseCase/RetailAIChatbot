@@ -30,6 +30,7 @@ class SQLChatResponse(BaseModel):
     reference_context: Optional[List[str]] = None      # New field
     query_result: Optional[Dict[str, Any]] = None
     final_answer: str
+    suggestion: Optional[List[str]] = None
     confidence: float
     sample_data: Optional[List[Dict]] = None  # Add this field
     total_rows: Optional[int] = None          # Add this field
@@ -106,6 +107,7 @@ async def chat_with_database(
             reference_context=response.get("reference_context", []),
             query_result=response.get("query_result"),
             final_answer=response.get("final_answer", response.get("explanation", "")),
+            suggestion=response.get("suggested_next_questions"),
             confidence=response.get("confidence", 0.8),
             sample_data=response.get("sample_data",[]),
             total_rows=response.get("total_rows",0),
