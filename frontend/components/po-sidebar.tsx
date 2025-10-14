@@ -754,7 +754,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
     return (
       <div className="p-4 text-center">
         <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-        <p className="text-xs text-muted-foreground">Select a project to view POs</p>
+        <p className="text-xs text-muted-foreground">Select a project to view documents</p>
       </div>
     )
   }
@@ -765,7 +765,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
         {/* Alert Section */}
         {/* <AlertSection></AlertSection> */}
         {/* Header */}
-        {/* <div className="p-3 border-b">
+        <div className="p-3 border-b">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-medium text-sm">Generated Documents</h3>
             <div className="flex items-center gap-2">
@@ -801,10 +801,10 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
             </div>
           </div>
 
-          <Badge variant="secondary" className="text-xs w-full justify-center">
+          {/* <Badge variant="secondary" className="text-xs w-full justify-center">
             {selectedProject.name}
-          </Badge>
-        </div> */}
+          </Badge> */}
+        </div>
 
         {/* **UNIFIED GENERATION INTERFACE** */}
         {/* <div className="p-3 border-b">
@@ -869,13 +869,13 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
               )}
             </Button>
           </div> */}
-          {/* <div className="p-3 border-b">
+          <div className="p-3 border-b">
             <div className="text-center">
               <p className="text-xs text-muted-foreground mb-1">
-                💬 Generate POs using chat commands
+                💬 Generate documents using chat commands
               </p>
               <p className="text-xs text-blue-600 font-medium">
-                Try: "generate PO for today"
+                Try: "generate documents for today"
               </p>
             </div>
           
@@ -939,7 +939,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
             </div>
           )}
 
-        </div> */}
+        </div>
 
         {/* SCROLLABLE CONTENT AREA */}
         <div className="flex-1 overflow-hidden">
@@ -949,11 +949,11 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
             <div className="p-3 border-b">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-xs font-medium text-muted-foreground">
-                  Today's POs ({filteredTodayPOs.length})
+                  Today's documents ({filteredTodayPOs.length})
                 </h4>
               </div>
-              
-              {/* Filter Buttons for Today's POs */}
+
+              {/* Filter Buttons for Today's documents */}
               <div className="mb-3">
                 <FilterButtons
                   currentFilter={todayFilter}
@@ -965,7 +965,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
               {filteredTodayPOs.length === 0 ? (
                 <div className="text-center py-4">
                   <p className="text-xs text-muted-foreground">
-                    {todayFilter === 'all' ? "No POs for today" : `No ${todayFilter.replace('_', ' ')} POs for today`}
+                    {todayFilter === 'all' ? "No documents for today" : `No ${todayFilter.replace('_', ' ')} documents for today`}
                   </p>
                 </div>
               ) : (
@@ -1103,7 +1103,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
               <div className="p-3">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-xs font-medium text-muted-foreground">
-                    POs for {format(selectedDate, 'MMM dd, yyyy')} ({filteredSelectedDatePOs.length})
+                    Documents for {format(selectedDate, 'MMM dd, yyyy')} ({filteredSelectedDatePOs.length})
                   </h4>
                 </div>
                 
@@ -1243,7 +1243,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
                 ) : (
                   <div className="text-center py-4">
                     <p className="text-xs text-muted-foreground">
-                      {selectedDateFilter === 'all' ? "No POs for this date" : `No ${selectedDateFilter.replace('_', ' ')} POs for this date`}
+                      {selectedDateFilter === 'all' ? "No documents for this date" : `No ${selectedDateFilter.replace('_', ' ')} documents for this date`}
                     </p>
                   </div>
                 )}

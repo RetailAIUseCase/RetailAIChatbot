@@ -1368,7 +1368,7 @@ export function ChatInterface({
                   ? `Embeddings processing... Ask about "${selectedProject.name}" (limited responses)`
                   : `Ask anything about "${selectedProject.name}"`
               }
-              className={`flex-1 text-sm h-15 rounded-4xl placeholder:text-gray-400 
+              className={`flex-1 text-sm h-15 rounded-4xl lg:h-20 placeholder:text-gray-400 
     focus:placeholder:text-transparent  ${isEmbeddingProcessing ? "border-amber-300 bg-amber-50/30" : ""
                 }`}
               disabled={isTyping}
@@ -1393,7 +1393,7 @@ export function ChatInterface({
           </div>
           <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-2">
-              <span>Project: {selectedProject.name}</span>
+              {/* <span>Project: {selectedProject.name}</span> */}
               {isEmbeddingProcessing && (
                 <Badge
                   variant="secondary"
