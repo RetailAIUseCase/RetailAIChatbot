@@ -51,7 +51,7 @@ import {
   MoreVertical,
   Trash2,
 } from "lucide-react"
-import GeneratedDocuments from "@/components/document-download-section"
+// import GeneratedDocuments from "@/components/document-download-section"
 
 interface Project {
   id: string
@@ -1086,7 +1086,7 @@ export default function DashboardPage() {
                   )}
                 </div>
               )}
-              <GeneratedDocuments></GeneratedDocuments>
+              {/* <GeneratedDocuments></GeneratedDocuments> */}
             </div>
           </div>
         </aside>
