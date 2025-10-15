@@ -236,7 +236,7 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-6">
-              <div className="flex items-start gap-4">
+              <div className="flex items-center gap-4">
                 <div className="bg-primary/10 rounded-lg">
                   <Image
                     src={smarterIcon.src}
@@ -256,7 +256,7 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              <div className="flex items-start gap-4">
+              <div className="flex items-center gap-4">
                 <div className="bg-primary/10 rounded-lg">
                   <Image
                     src={supplyIcon.src}
@@ -276,7 +276,7 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              <div className="flex items-start gap-4">
+              <div className="flex items-center gap-4">
                 <div className="bg-primary/10 rounded-lg">
                   <Image
                     src={connectedIcon.src}
@@ -295,7 +295,7 @@ export default function LoginPage() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-start gap-4">
+              {/* <div className="flex items-start gap-4">
                 <div className="bg-primary/10 rounded-lg">
                   <Image
                     src={alertIcon.src}
@@ -313,7 +313,7 @@ export default function LoginPage() {
                     forms or dashboards
                   </p>
                 </div>
-              </div>
+              </div> */}
             </div>
           </div>
 
