@@ -733,7 +733,7 @@ const MessageBubble = ({
     >
       {message.sender === "ai" && (
         <Avatar className="h-6 w-6 flex-shrink-0 mt-1">
-          <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+          <AvatarFallback className="bg-secondary text-primary-foreground text-xs">
             <Bot className="h-3 w-3" />
           </AvatarFallback>
         </Avatar>
@@ -745,7 +745,7 @@ const MessageBubble = ({
       >
         <Card
           className={`${message.sender === "user"
-              ? "bg-primary text-primary-foreground border-primary"
+              ? "bg-secondary text-primary-foreground border-primary"
               : "bg-card border-border"
             } shadow-sm overflow-hidden`}
           style={{ maxWidth: "100%" }}
@@ -1378,7 +1378,7 @@ export function ChatInterface({
               type="submit"
               size="sm"
               disabled={!message.trim() || isTyping}
-              className={`px-3 ${isEmbeddingProcessing ? "bg-amber-600 hover:bg-amber-700" : ""
+              className={`px-3 bg-secondary ${isEmbeddingProcessing ? "bg-amber-600 hover:bg-amber-700" : ""
                 }`}
               variant={isEmbeddingProcessing ? "secondary" : "default"}
             >
