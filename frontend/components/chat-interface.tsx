@@ -1062,12 +1062,21 @@ export function ChatInterface({
 
         const formattedMessages = data.messages.map((msg: any) => {
           let queryResult = msg.query_result;
+          let suggestion = msg.metadata;
           if (typeof queryResult === "string") {
             try {
               queryResult = JSON.parse(queryResult);
             } catch (e) {
               console.warn("Failed to parse query_result:", e);
               queryResult = null;
+            }
+          }
+          if (typeof suggestion === "string") {
+            try {
+              suggestion = JSON.parse(suggestion);
+            } catch (e) {
+              console.warn("Failed to parse suggestion:", e);
+              suggestion = null;
             }
           }
           return {
@@ -1079,6 +1088,7 @@ export function ChatInterface({
             queryResult: queryResult,
             intent: msg.intent,
             tables_used: msg.tables_used,
+            suggestion: suggestion?.suggested_next_questions,
             business_rules_applied: msg.business_rules_applied,
             reference_context: msg.reference_context,
             sample_data:

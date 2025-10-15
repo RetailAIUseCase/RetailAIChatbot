@@ -42,7 +42,7 @@ class PONumberGenerator:
             po_number = await self._ensure_unique_po_number(po_number, user_id, project_id)
             
             return po_number
-            f
+
         except Exception as e:
             logger.error(f"Error generating PO number: {e}")
             # Fallback to UUID-based number
@@ -66,7 +66,7 @@ class PONumberGenerator:
                 count = await connection.fetchval("""
                     SELECT COUNT(*) FROM purchase_orders 
                     WHERE user_id = $1 AND project_id = $2 AND order_date = $3
-                """, user_id, project_id, order_date)
+                """,user_id, project_id, order_date)
                 
                 next_sequence = (count or 0) + 1
                 self.po_counter_cache[cache_key] = next_sequence

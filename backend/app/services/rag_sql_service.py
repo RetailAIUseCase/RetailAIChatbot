@@ -1032,41 +1032,41 @@ class SQLRAGService:
             logger.error(f"Error fetching conversation history: {e}")
             return []
 
-    async def _llm_verify_po_intent(self, user_query: str) -> bool:
-        """Use LLM to verify if query is really about Document generation"""
-        try:
-            prompt = f"""
-                Analyze this user query and determine if the user wants to generate/create a document.
+    # async def _llm_verify_po_intent(self, user_query: str) -> bool:
+    #     """Use LLM to verify if query is really about Document generation"""
+    #     try:
+    #         prompt = f"""
+    #             Analyze this user query and determine if the user wants to generate/create a document.
 
-                Query: "{user_query}"
+    #             Query: "{user_query}"
 
-                Respond with only "YES" if the query is asking to:
-                - Generate, create, or make a purchase order
-                - Create a PO for a specific date
-                - Generate procurement documents
-                - Order materials due to shortfall
+    #             Respond with only "YES" if the query is asking to:
+    #             - Generate, create, or make a purchase order
+    #             - Create a PO for a specific date
+    #             - Generate procurement documents
+    #             - Order materials due to shortfall
 
-                Respond with only "NO" if the query is asking about:
-                - Viewing existing POs
-                - Analyzing data
-                - General questions
-                - Other operations
+    #             Respond with only "NO" if the query is asking about:
+    #             - Viewing existing POs
+    #             - Analyzing data
+    #             - General questions
+    #             - Other operations
 
-                Response:"""
+    #             Response:"""
 
-            response = await self.client.chat.completions.create(
-                model=self.NLP_LLM_model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=5,
-                temperature=0.1
-            )
+    #         response = await self.client.chat.completions.create(
+    #             model=self.NLP_LLM_model,
+    #             messages=[{"role": "user", "content": prompt}],
+    #             max_tokens=5,
+    #             temperature=0.1
+    #         )
             
-            result = response.choices[0].message.content.strip().upper()
-            return result == "YES"
+    #         result = response.choices[0].message.content.strip().upper()
+    #         return result == "YES"
             
-        except Exception as e:
-            logger.warning(f"LLM verification failed: {e}")
-            return True  # Default to True if LLM fails
+    #     except Exception as e:
+    #         logger.warning(f"LLM verification failed: {e}")
+    #         return True  # Default to True if LLM fails
         
     async def extract_date_from_query_llm(self, user_query: str, context:str) -> str:
         """Extract date from query using LLM - much more flexible"""

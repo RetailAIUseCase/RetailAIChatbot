@@ -419,6 +419,7 @@ class POWorkflowService:
             sql_result = await rag_sql_service.generate_sql_response(
                 analysis_query, relevant_data, []
             )
+            logger.info("SQL Query for fetching direct materials: ", sql_result.get("sql_query",""))
             
             if not sql_result.get("query_result", {}).get("success"):
                 return {"has_materials": False, "error": "Could not fetch material details"}
@@ -833,7 +834,7 @@ class POWorkflowService:
             base_query = f""" If query is related to shortfall, check if there are enough at hand stock of SKU to fulfill order for date '{order_date}'
                 If the at hand stock (as at_hand_stock) of SKU is not sufficient, then return the additional cases i.e., required - at hand stock, of SKU to be produced (as sku_shortfall_count)
                 Include order number (as order_number) and return sku_shortfall_count with details of each SKU shortfall also the order quantity (as sku_order_quantity).
-                Return only rows where sku_shortfall_count > 0
+                Return only rows where sku_shortfall_count has some value
                 If no shortfall exists, return empty result."""
             
             if user_intent and user_intent.get('intent_type') != 'all':
@@ -882,7 +883,8 @@ class POWorkflowService:
             sql_result = await rag_sql_service.generate_sql_response(
                 analysis_query, relevant_data, []
             )
-            
+            logger.info("SQL Query for checking SKU shortfall: ", sql_result.get("sql_query",""))
+
             if not sql_result.get("query_result", {}).get("success"):
                 return {"has_shortfall": False, "error": "Could not analyze SKU shortfall"}
             
@@ -937,7 +939,7 @@ class POWorkflowService:
                                       max(0, required_qty - at_hand))
                 
                 # Only include if sku_shortfall_count > 0 
-                if sku_shortfall_count > 0:
+                if sku_shortfall_count != 0:
                     sku_shortfalls.append({
                         "order_number": order_no,
                         "sku": sku,
@@ -977,7 +979,7 @@ class POWorkflowService:
         can we check how much is the shortfall of packaging materials required, by comparing with at hand?
         Return the shortfall of packaging materials required as field packagingMaterial_shortfall_count.
         Filter by packaging material only.
-        Return rows where packagingMaterial_shortfall_count > 0.
+        Return rows where packagingMaterial_shortfall_count has some value.
         """
         
         try:
@@ -1008,7 +1010,7 @@ class POWorkflowService:
             2. Compare required materials with at hand stock
             3. Calculate shortfall of materials as material_shortfall_count
             4. Filter by specified materials only
-            5. Return rows where material_shortfall_count > 0
+            5. Return rows where material_shortfall_count has some value
             6. Check Business rules for any specified related to this step
             7. Check conversation history for any specific filtering based on previous queries and content
             
@@ -1018,12 +1020,12 @@ class POWorkflowService:
             - material_category (e.g., packaging_material)
             - required_quantity (needed for SKU production)
             - at_hand_stock (current available stock)
-            - material_shortfall_count (required - at hand, only if > 0)
+            - material_shortfall_count (required - at hand, only if it has some value)
             - werks (plant)
             - lgort (storage location)
             - used_for_skus (which SKUs this material is needed for)
             
-            Return rows where material_shortfall_count > 0.
+            Return rows where material_shortfall_count has some value.
             """
 
             # analysis_query = f"""
@@ -1044,6 +1046,7 @@ class POWorkflowService:
             sql_result = await rag_sql_service.generate_sql_response(
                 analysis_query, relevant_data, []
             )
+            logger.info("SQL Query for checking material shortfall: ", sql_result.get("sql_query",""))
             
             if not sql_result.get("query_result", {}).get("success"):
                 return {"has_shortfall": False, "error": "Could not analyze material shortfall"}
@@ -1201,7 +1204,7 @@ class POWorkflowService:
             sql_result = await rag_sql_service.generate_sql_response(
                 analysis_query, relevant_data, []
             )
-            
+            logger.info("SQL Query for getting procurement costs: ", sql_result.get("sql_query",""))
             if not sql_result.get("query_result", {}).get("success"):
                 return {"vendor_options": [], "error": "Could not get procurement costs from vendors"}
             
