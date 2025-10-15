@@ -162,7 +162,7 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
         size="sm"
         variant={currentFilter === 'all' ? "default" : "outline"}
         onClick={() => onFilterChange('all')}
-        className="h-6 text-xs px-2"
+        className="h-6 text-xs px-2 bg-secondary"
       >
         All ({counts.total})
       </Button>

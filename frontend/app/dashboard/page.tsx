@@ -824,7 +824,7 @@ export default function DashboardPage() {
           <div className="p-4 border-b border-sidebar-border flex-shrink-0">
             <Dialog open={isCreateProjectOpen} onOpenChange={setIsCreateProjectOpen}>
               <DialogTrigger asChild>
-                <Button className="w-full justify-start gap-2" size="sm">
+                <Button className="w-full justify-start gap-2 bg-secondary" size="sm">
                   <Plus className="h-4 w-4" />
                   New Project
                 </Button>
@@ -897,7 +897,7 @@ export default function DashboardPage() {
                         key={project.id}
                         className={`p-3 cursor-pointer transition-colors ${
                           selectedProject?.id === project.id
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                            ? "bg-secondary text-sidebar-accent-foreground"
                             : "hover:bg-sidebar-accent/50"
                         }`}
                       >
@@ -1064,11 +1064,11 @@ export default function DashboardPage() {
                         </Button>
                       </div>
                       <div 
-                        className="space-y-1 overflow-y-auto transition-all duration-300"
-                        style={{ 
-                          maxHeight: recentDocsExpanded ? recentDocsHeight : '80px',
-                          minHeight: '80px'
-                        }}
+                        className="space-y-1 h-auto transition-all duration-300 mb-2"
+                        // style={{ 
+                        //   maxHeight: recentDocsExpanded ? recentDocsHeight : '80px',
+                        //   minHeight: '80px'
+                        // }}
                       >
                         {selectedProject.documents.slice(0, 7).map((doc) => (
                           <div key={doc.id} className="flex items-center gap-2 p-2 rounded text-xs">
