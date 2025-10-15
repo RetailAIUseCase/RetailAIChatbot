@@ -1378,7 +1378,7 @@ export function ChatInterface({
               type="submit"
               size="sm"
               disabled={!message.trim() || isTyping}
-              className={`px-3 ${isEmbeddingProcessing ? "bg-amber-600 hover:bg-amber-700" : ""
+              className={`px-3 bg-secondary ${isEmbeddingProcessing ? "bg-amber-600 hover:bg-amber-700" : ""
                 }`}
               variant={isEmbeddingProcessing ? "secondary" : "default"}
             >
