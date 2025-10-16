@@ -608,7 +608,7 @@ class POWorkflowService:
                         }, 
                         error=None
                     )
-                    await manager.notify_workflow_complete(project_id, workflow_id, "No material shortfall found.")
+                    await manager.notify_workflow_complete(project_id, workflow_id, "No packaging material shortfall found.")
                     return
                 
                 #  Step 3: Get procurement cost with vendor details
@@ -832,9 +832,9 @@ class POWorkflowService:
             
             # Base query
             base_query = f""" If query is related to shortfall, check if there are enough at hand stock of SKU to fulfill order for date '{order_date}'
-                If the at hand stock (as at_hand_stock) of SKU is not sufficient, then return the additional cases i.e., required - at hand stock, of SKU to be produced (as sku_shortfall_count)
+                If the at hand stock (as at_hand_stock) of SKU is not sufficient, then return the additional cases i.e., "order quantity" minus "at hand stock quantity", of SKU to be produced (as sku_shortfall_count)
                 Include order number (as order_number) and return sku_shortfall_count with details of each SKU shortfall also the order quantity (as sku_order_quantity).
-                Return only rows where sku_shortfall_count has some value
+                Return only rows where sku_shortfall_count is greater than 0
                 If no shortfall exists, return empty result."""
             
             if user_intent and user_intent.get('intent_type') != 'all':
@@ -939,7 +939,7 @@ class POWorkflowService:
                                       max(0, required_qty - at_hand))
                 
                 # Only include if sku_shortfall_count > 0 
-                if sku_shortfall_count != 0:
+                if sku_shortfall_count > 0:
                     sku_shortfalls.append({
                         "order_number": order_no,
                         "sku": sku,
@@ -1003,16 +1003,13 @@ class POWorkflowService:
             Conversation History: {conversation_context}
             SKUs with shortfalls and order quantity:
             {sku_shortfall_summary}
-            To fulfill order for date '{order_date}', check how much is the shortfall of materials required, by comparing with at hand stock?
+            To fulfill order for date '{order_date}', check how much is the shortfall of each of the packaging materials, by calculating "required quantity" minus "at hand stock quantity", required to produce additional cases?
             {intent_context}
             I need to:
-            1. Determine specified materials required for these SKU shortfalls
-            2. Compare required materials with at hand stock
-            3. Calculate shortfall of materials as material_shortfall_count
-            4. Filter by specified materials only
-            5. Return rows where material_shortfall_count has some value
-            6. Check Business rules for any specified related to this step
-            7. Check conversation history for any specific filtering based on previous queries and content
+            1. Calculate shortfall of each of the packaging materials as material_shortfall_count
+            2. Filter by Packaging Materials only
+            3. Return rows where material_shortfall_count greater than 0
+            4. Check Business rules for any specified related to this step
             
             Return format:
             - matnr (material identifier)
@@ -1020,12 +1017,12 @@ class POWorkflowService:
             - material_category (e.g., packaging_material)
             - required_quantity (needed for SKU production)
             - at_hand_stock (current available stock)
-            - material_shortfall_count (required - at hand, only if it has some value)
+            - material_shortfall_count (required quantity minus at hand stock quantity, only if its value is greater than 0)
             - werks (plant)
             - lgort (storage location)
             - used_for_skus (which SKUs this material is needed for)
             
-            Return rows where material_shortfall_count has some value.
+            Return rows where material_shortfall_count is greater than 0.
             """
 
             # analysis_query = f"""
@@ -1163,19 +1160,16 @@ class POWorkflowService:
             Business Rules Available: {json.dumps(business_rules, indent=2)}
             Conversation Context: {conversation_context},
 
-            Now that we have identified material shortfall units to fulfill order for date '{order_date}', give the procurement cost based on least price and lead time from vendors. Include vendor details and order number.
+            Now that we have identified pacakging material shortfall units to fulfill order for date '{order_date}', give the procurement cost based on fastest lead time from vendors. Include vendor details and order number.
             
-            Materials with shortfall:
+            Packaging Materials with shortfall:
             {material_shortfall_summary}
             
             I need to:
-            1. Check if vendors specified by user or find vendors for each material with shortfall
-            2. If not specified in rules and query, select vendors with least lead time for each material.
-            2. Get procurement cost based on cost per unit price from vendors
-            3. Include vendor email id
-            4. Include order number (from original orders)
-            5. Extract rules from business logic for any specific instructions to consider
-            6. Extract information from conversation history, for any specific filtering
+            1. Get procurement cost based on cost per unit price from vendors
+            2. Include vendor email id
+            3. Include order number (from original orders)
+            4. Extract rules from business logic for any specific instructions to consider
             
             Return format:
             - material_id
