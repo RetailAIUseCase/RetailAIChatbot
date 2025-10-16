@@ -1269,7 +1269,7 @@ class SQLRAGService:
         query_lower = user_query.lower().strip()
         
         if any(greet in query_lower for greet in ['hi', 'hello', 'hey']):
-            return "Hello! I'm your SQL Assistant. I can help you query your database and analyze your data. What would you like to know?"
+            return "Hello! I'm your Supply Chain Assistant. I can help you query your database and analyze your data. What would you like to know?"
         
         if any(thanks in query_lower for thanks in ['thank', 'thanks']):
             return "You're welcome! Feel free to ask me anything about your data."
@@ -1286,7 +1286,7 @@ class SQLRAGService:
                 recent_context.append(f"{role}: {msg['content']}")
             context = "\n".join(recent_context)
 
-        prompt = f"""You are a helpful and friendly SQL Assistant for a business intelligence platform.
+        prompt = f"""You are a helpful and friendly Supply Chain SQL Assistant for a business intelligence platform.
 
             {f"Recent conversation context: {context}" if context else ""}
 
@@ -1318,7 +1318,7 @@ class SQLRAGService:
     async def generate_clarification_response(self, user_query: str, conversation_history: List[Dict]) -> str:
         """Handle questions about capabilities and help requests"""
         
-        help_response = """I'm your SQL Assistant! Here's what I can help you with:
+        help_response = """I'm your Supply Chain Assistant! Here's what I can help you with:
 
             🔍 Data Queries: Ask questions about your data in natural language
             - "Show me sales for last quarter"
@@ -1339,7 +1339,7 @@ class SQLRAGService:
             - "Sort that by date"
             - "Show me more details"
 
-            Just ask me anything about your data in plain English, and I'll convert it to SQL and run the analysis for you!"""
+            Just ask me anything about your data in plain English, and I'll run the analysis for you!"""
 
         query_lower = user_query.lower()
         if any(word in query_lower for word in ['help', 'what can you', 'how do i', 'what do you do']):

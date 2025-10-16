@@ -841,7 +841,7 @@ const MessageBubble = ({
             >
               <Copy className="h-2 w-2" />
             </Button>
-            {message.sender === "ai" && (
+            {/* {message.sender === "ai" && (
               <>
                 <Button
                   variant="ghost"
@@ -860,7 +860,7 @@ const MessageBubble = ({
                   <ThumbsDown className="h-2 w-2" />
                 </Button>
               </>
-            )}
+            )} */}
           </div>
         </div>
       </div>
@@ -1012,7 +1012,7 @@ export function ChatInterface({
         setMessages([
           {
             id: "welcome",
-            content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". 
+            content: `Hello! I'm your Supply Chain Assistant for "${selectedProject.name}". 
                       I can help you:
                       📊 Query your database using natural language
                       📋 Generate purchase orders by saying "generate PO for today"
@@ -1048,7 +1048,7 @@ export function ChatInterface({
             setMessages([
               {
                 id: "welcome",
-                content: `Hello! I'm your SQL Assistant for "${selectedProject.name}". I can help you query your database using schema information, business rules, and documentation. What would you like to know?`,
+                content: `Hello! I'm your Supply Chain Assistant for "${selectedProject.name}". I can help you query your database using schema information, business rules, and documentation. What would you like to know?`,
                 sender: "ai",
                 timestamp: new Date(),
                 intent: isEmbeddingProcessing ? "processing_status" : "welcome",

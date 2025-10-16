@@ -187,7 +187,7 @@ class POWorkflowService:
             # Build conversation context
             # from app.services.rag_sql_service import rag_sql_service
             # context = rag_sql_service._build_conversation_context(conversation_history)
-            
+            today_actual = datetime.now().strftime("%Y-%m-%d")
             prompt = f"""Analyze the user's request and extract their intent for PO generation.
 
                 **User Query:** "{user_query}"
@@ -198,7 +198,9 @@ class POWorkflowService:
                 **Business Rules Available:**
                 {json.dumps(business_rules, indent=2)}
 
-                **Default Order Date:** {order_date}
+                **IMPORTANT DATE CONTEXT:**
+                - Actual Today's Date: {today_actual}
+                - Order Date for this workflow: {order_date}  (This is the date extracted from user query)
 
                 **Extract the following from user query and business rules available:**
 
@@ -208,7 +210,7 @@ class POWorkflowService:
                 - Material IDs (e.g., "PK0001", "material M123", "packaging PK0005")
                 - Material category (eg., "Packaging material", "all", "Finished Goods")
                 - Material description (e.g., "Pet bottle", "bottle cap", "labels", "syrup", "Pet Bottle 500 ml", "Bottle Cap 500 ml pet bottle")
-                - Dates (e.g., "today", "yesterday", "2025-10-08", "last week")
+                - Date mentioned: Order date mentioned (e.g., "2025-10-08")
                 - Quantities specified (e.g., "100 units", "500 pieces", "1000 bottles")
                 - Vendors (vendor name, vendor id or vendor email id)
 
@@ -242,7 +244,7 @@ class POWorkflowService:
                         "Pet bottle": 100,
                         "default_quantity": null  // If user says "PK0001" without quantity
                         }},
-                    "date_mentioned": "2025-10-08" or null,
+                    "date_mentioned": order date mentioned as "2025-10-08" or null,
                     "date_range": {{"start": "...", "end": "..."}} or null,
                     "vendor_details":[...]
                 }},
@@ -419,7 +421,7 @@ class POWorkflowService:
             sql_result = await rag_sql_service.generate_sql_response(
                 analysis_query, relevant_data, []
             )
-            logger.info("SQL Query for fetching direct materials: ", sql_result.get("sql_query",""))
+            logger.info("SQL Query for fetching direct materials: %s", sql_result.get("sql_query",""))
             
             if not sql_result.get("query_result", {}).get("success"):
                 return {"has_materials": False, "error": "Could not fetch material details"}
@@ -576,6 +578,7 @@ class POWorkflowService:
                         error=None
                     )
                     await manager.notify_workflow_complete(project_id, workflow_id, "No SKU shortfall found. No PO needed.")
+                    logger.info(f"No SKU shortfall found. No PO needed for project ID {project_id}")
                     return
                 
                 # Step 2: Check material shortfall
@@ -609,6 +612,7 @@ class POWorkflowService:
                         error=None
                     )
                     await manager.notify_workflow_complete(project_id, workflow_id, "No packaging material shortfall found.")
+                    logger.info(f"No packaging material shortfall found for project ID {project_id}")
                     return
                 
                 #  Step 3: Get procurement cost with vendor details
@@ -642,6 +646,7 @@ class POWorkflowService:
                     error="No vendors found for materials"
                 )
                 await manager.notify_workflow_error(project_id, workflow_id, "No vendors available for required materials")
+                logger.info(f"No vendors available for required materials for project ID {project_id}")
                 return
                 
             # Step 4: Generate POs
@@ -689,6 +694,7 @@ class POWorkflowService:
                     workflow_id, 
                     f"❌ PO generation failed: {error_message}"
                 )
+                logger.error(f"❌ PO generation failed: {error_message}")
                 return  # **EXIT HERE - DON'T CONTINUE**
 
             # Handle partial success
@@ -749,6 +755,7 @@ class POWorkflowService:
                     workflow_id, 
                     "❌ No purchase orders could be generated"
                 )
+                logger.info(f"❌ No purchase orders could be generated for project ID {project_id}")
                 return
             # Complete workflow
             final_result = {
@@ -883,7 +890,8 @@ class POWorkflowService:
             sql_result = await rag_sql_service.generate_sql_response(
                 analysis_query, relevant_data, []
             )
-            logger.info("SQL Query for checking SKU shortfall: ", sql_result.get("sql_query",""))
+
+            logger.info("SQL Query for checking SKU shortfall: %s", sql_result.get("sql_query",""))
 
             if not sql_result.get("query_result", {}).get("success"):
                 return {"has_shortfall": False, "error": "Could not analyze SKU shortfall"}
@@ -1043,7 +1051,7 @@ class POWorkflowService:
             sql_result = await rag_sql_service.generate_sql_response(
                 analysis_query, relevant_data, []
             )
-            logger.info("SQL Query for checking material shortfall: ", sql_result.get("sql_query",""))
+            logger.info("SQL Query for checking material shortfall: %s", sql_result.get("sql_query",""))
             
             if not sql_result.get("query_result", {}).get("success"):
                 return {"has_shortfall": False, "error": "Could not analyze material shortfall"}
@@ -1166,10 +1174,12 @@ class POWorkflowService:
             {material_shortfall_summary}
             
             I need to:
-            1. Get procurement cost based on cost per unit price from vendors
-            2. Include vendor email id
-            3. Include order number (from original orders)
-            4. Extract rules from business logic for any specific instructions to consider
+            1. Check if vendors specified by user or find vendors for each material with shortfall
+            2. If not specified in rules and query, select vendors with least lead time for each material.
+            3. Get procurement cost based on cost per unit price from vendors
+            4. Include vendor email id
+            5. Include order number (from original orders)
+            6. Extract rules from business logic for any specific instructions to consider
             
             Return format:
             - material_id
@@ -1198,7 +1208,7 @@ class POWorkflowService:
             sql_result = await rag_sql_service.generate_sql_response(
                 analysis_query, relevant_data, []
             )
-            logger.info("SQL Query for getting procurement costs: ", sql_result.get("sql_query",""))
+            logger.info("SQL Query for getting procurement costs: %s", sql_result.get("sql_query",""))
             if not sql_result.get("query_result", {}).get("success"):
                 return {"vendor_options": [], "error": "Could not get procurement costs from vendors"}
             
