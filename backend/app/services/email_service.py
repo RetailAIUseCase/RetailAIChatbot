@@ -714,8 +714,12 @@ class EmailService:
             return {"success": False, "error": str(e)}
 
     def _send_email_blocking(self, msg):
-        server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-        server.starttls()
+        # server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+        # server.starttls()
+        # server.login(self.email_user, self.email_password)
+        # server.send_message(msg)
+        # server.quit()
+        server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port)
         server.login(self.email_user, self.email_password)
         server.send_message(msg)
         server.quit()
