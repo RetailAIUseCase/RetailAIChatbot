@@ -910,14 +910,14 @@ export function POSidebar({ selectedProject }: POSidebarProps) {
               </Popover>
             </div>
 
-          {workflowStatus && (
+          {/* {workflowStatus && (
             <div className="mt-2 bg-blue-50 border border-blue-200 rounded p-2">
               <div className="flex items-center gap-2">
                 <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
                 <p className="text-xs text-blue-800">{workflowStatus}</p>
               </div>
             </div>
-          )}
+          )} */}
 
           
           {workflowStatus && (

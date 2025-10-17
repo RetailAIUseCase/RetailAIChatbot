@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # SendGrid Configuration
     SENDGRID_API_KEY: str
     SENDGRID_FROM_EMAIL: str 
+    EMAIL_PROVIDER: str
 
     # Template IDs (you'll get these from SendGrid dashboard)
     SENDGRID_PO_APPROVAL_TEMPLATE_ID: str 
