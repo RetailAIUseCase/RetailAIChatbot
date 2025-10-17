@@ -1803,7 +1803,8 @@ class POWorkflowService:
                     order_numbers=po["order_numbers"],
                     approver_name=finance_manager["emp_name"],
                     approver_email=finance_manager["emp_email_id"],
-                    approval_token=approval_token
+                    approval_token=approval_token,
+                    approval_threshold=po["approval_threshold"]
                 )
                 
                 if result["success"]:

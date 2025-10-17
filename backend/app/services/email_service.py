@@ -155,7 +155,8 @@ class EmailService:
         order_numbers: List[str],
         approver_name: str,
         approver_email: str,
-        approval_token: str
+        approval_token: str,
+        approval_threshold: int
     ) -> Dict[str, Any]:
         """
         Send approval email to finance manager with:
@@ -180,7 +181,7 @@ class EmailService:
                 "vendor_email": vendor_email,
                 "total_amount": f"{total_amount:,.2f}",
                 "order_numbers": ", ".join(order_numbers) if isinstance(order_numbers, list) else str(order_numbers),
-                "threshold": f"{settings.PO_APPROVAL_THRESHOLD:,.0f}",
+                "threshold": f"{approval_threshold:,.0f}",
                 "approve_link": approve_link,
                 "reject_link": reject_link,
                 "approval_token": approval_token[:8],
@@ -188,6 +189,7 @@ class EmailService:
                 "help_email": self.company_email,
                 "subject": subject,
             }
+            print("_________________________________________________________",template_data['threshold'])
             # Render template
             html_body = self._render_template("po_approval.html", template_data)
 
