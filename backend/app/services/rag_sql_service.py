@@ -745,9 +745,12 @@ class SQLRAGService:
 
                     Available Database Schemas:
                     {db_context}
-
+                    
                     Conversation History:
                     {conversation_context}
+                    
+                    Available Business Logic Context:
+                    {business_context}
 
                     Instructions:
                     - Use the database schema information to generate accurate SQL queries

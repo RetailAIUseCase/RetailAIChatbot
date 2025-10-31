@@ -24,9 +24,10 @@ class CorporatePOPDFGenerator(FPDF):
     """Thread-safe PDF generator that creates fresh instances"""
     
     # Corporate Colors (RGB values for FPDF)
-    CORPORATE_RED = (180, 30, 45)
-    LIGHT_GRAY = (245, 245, 245)
-    DARK_GRAY = (80, 80, 80)
+    NAGARRO_GREEN = (71, 215, 172)      # Primary mint green #47D7AC
+    NAGARRO_DARK = (24, 72, 58)         # Petrol blue/dark teal
+    LIGHT_MINT = (230, 248, 243)        # Light mint background
+    DARK_GRAY = (60, 60, 60)
     WHITE = (255, 255, 255)
     BLACK = (0, 0, 0)
 
@@ -53,7 +54,7 @@ class CorporatePOPDFGenerator(FPDF):
         try:
             # Go up to app/ then to static/images/
             base_dir = Path(__file__).parent.parent  # Goes from services/ to app/
-            logo_path = base_dir / "static" / "images" / "coca_cola.png"
+            logo_path = base_dir / "static" / "images" / "Nagarro_logo_new.png"
             
             if logo_path.exists():
                 logger.info(f"✅ Logo found at: {logo_path}")
@@ -70,7 +71,7 @@ class CorporatePOPDFGenerator(FPDF):
         """Custom header with logo and company info"""
         if self.logo_path and os.path.exists(self.logo_path):
             try:
-                self.image(self.logo_path, 10, 6, 40)
+                self.image(self.logo_path, 10, 6, 55, 15)
             except Exception as e:
                 logger.warning(f"Could not load logo: {e}")
                 self._draw_text_logo()
@@ -78,11 +79,11 @@ class CorporatePOPDFGenerator(FPDF):
             self._draw_text_logo()
 
         self.set_font("Arial", 'B', 22)
-        self.set_text_color(*self.CORPORATE_RED)
+        self.set_text_color(*self.NAGARRO_DARK)
         self.set_xy(120, 15)
         self.cell(80, 10, "PURCHASE ORDER", ln=1, align="R")
         
-        self.set_draw_color(*self.CORPORATE_RED)
+        self.set_draw_color(*self.NAGARRO_GREEN)
         self.set_line_width(0.5)
         self.line(10, 30, 200, 30)
         self.ln(15)
@@ -91,8 +92,8 @@ class CorporatePOPDFGenerator(FPDF):
         """Draw text-based logo when image logo is not available"""
         self.set_xy(10, 15)
         self.set_font("Arial", 'B', 16)
-        self.set_text_color(*self.CORPORATE_RED)
-        self.cell(0, 8, self.company_details.get('name', 'Company Name'), ln=1)
+        self.set_text_color(*self.NAGARRO_GREEN)
+        self.cell(0, 8, self.company_details.get('name', 'NAGARRO'), ln=1)
 
     def footer(self):
         """Custom footer with contact info"""
@@ -101,7 +102,7 @@ class CorporatePOPDFGenerator(FPDF):
         self.set_text_color(100, 100, 100)
         
         contact_name = self.company_details.get('contact_name', 'Procurement Department')
-        email = self.company_details.get('email', 'procurement@company.com')
+        email = self.company_details.get('email', 'procurement@nagrro.com')
         phone = self.company_details.get('phone', '(000) 000-0000')
         
         footer_text = f"If you have questions about this PO, contact {contact_name} at {email} or {phone}"
@@ -129,8 +130,8 @@ class CorporatePOPDFGenerator(FPDF):
         # Company Information Block
         self.set_xy(10, 35)
         self.set_font("Arial", 'B', 14)
-        self.set_text_color(*self.CORPORATE_RED)
-        self.cell(0, 7, self.company_details.get('name', 'Company Name'), ln=1)
+        self.set_text_color(*self.NAGARRO_GREEN)
+        self.cell(0, 7, self.company_details.get('name', 'NAGARRO'), ln=1)
         
         self.set_font("Arial", size=10)
         self.set_text_color(*self.BLACK)
@@ -143,7 +144,10 @@ class CorporatePOPDFGenerator(FPDF):
         
         self.cell(0, 5, f"Phone: {self.company_details.get('phone', '')}", ln=1)
         self.cell(0, 5, f"Website: {self.company_details.get('website', '')}", ln=1)
-        
+        # PO details on right with mint background
+        self.set_fill_color(*self.LIGHT_MINT)
+        self.rect(115, 38, 90, 22, 'F')
+
         # PO details on right
         self.set_xy(120, 40)
         self.set_font("Arial", 'B', 10)
@@ -155,14 +159,14 @@ class CorporatePOPDFGenerator(FPDF):
         self.set_font("Arial", 'B', 10)
         self.cell(30, 6, "PO #:")
         self.set_font("Arial", 'B', 10)
-        self.set_text_color(*self.CORPORATE_RED)
+        self.set_text_color(*self.NAGARRO_GREEN)
         self.cell(40, 6, po_number, ln=1)
         self.set_text_color(*self.BLACK)
 
         # Vendor and Ship To Section
         self.ln(15)
         self.set_font("Arial", 'B', 12)
-        self.set_fill_color(*self.DARK_GRAY)
+        self.set_fill_color(*self.NAGARRO_DARK)
         self.set_text_color(*self.WHITE)
         self.cell(95, 8, "VENDOR", border=0, fill=True)
         self.cell(95, 8, "SHIP TO", border=0, ln=1, fill=True)
@@ -172,10 +176,10 @@ class CorporatePOPDFGenerator(FPDF):
         
         # Row 1: Names
         self.cell(95, 6, vendor.get('vendor_name', 'Vendor Name'), border=0)
-        self.cell(95, 6, self.company_details.get('name', 'Company Name'), border=0, ln=1)
+        self.cell(95, 6, self.company_details.get('name', 'NAGARRO'), border=0, ln=1)
         
         # Row 2: Addresses
-        vendor_address = vendor.get('vendor_address', '123 Bottle St, Atlanta')
+        vendor_address = vendor.get('vendor_address', '123 Business St, ')
         company_address = self.company_details.get('address', '').split('\n')[0]
         self.cell(95, 6, vendor_address[:40], border=0)
         self.cell(95, 6, company_address, border=0, ln=1)
@@ -193,7 +197,7 @@ class CorporatePOPDFGenerator(FPDF):
         # Materials Table
         self.ln(10)
         self.set_font("Arial", 'B', 10)
-        self.set_fill_color(*self.CORPORATE_RED)
+        self.set_fill_color(*self.NAGARRO_GREEN)
         self.set_text_color(*self.WHITE)
         
         # Header row
@@ -207,7 +211,7 @@ class CorporatePOPDFGenerator(FPDF):
         # Table data
         self.set_font("Arial", '', 9)
         self.set_text_color(*self.BLACK)
-        self.set_fill_color(*self.WHITE)
+        # self.set_fill_color(*self.WHITE)
         
         for material_option in materials:
             material = material_option['material']
@@ -234,7 +238,7 @@ class CorporatePOPDFGenerator(FPDF):
         other_charges = pdf_data.get('other_charges', 0.0)
         
         self.set_font("Arial", 'B', 10)
-        self.set_fill_color(*self.LIGHT_GRAY)
+        self.set_fill_color(*self.LIGHT_MINT)
         
         # Position on right side
         start_x = 120
@@ -264,7 +268,7 @@ class CorporatePOPDFGenerator(FPDF):
         
         # Total
         self.set_x(start_x)
-        self.set_fill_color(*self.CORPORATE_RED)
+        self.set_fill_color(*self.NAGARRO_GREEN)
         self.set_text_color(*self.WHITE)
         self.cell(40, 10, "TOTAL:", 0, 0, 'L')
         self.cell(30, 10, safe_currency(total_amount), 1, 1, 'R', fill=True)
@@ -277,7 +281,7 @@ class CorporatePOPDFGenerator(FPDF):
         
         comments = pdf_data.get('comments', 'Please deliver as per agreed timeline and specifications.')
         self.set_font("Arial", '', 10)
-        self.set_fill_color(*self.LIGHT_GRAY)
+        self.set_fill_color(*self.LIGHT_MINT)
         
         # Multi-cell for comments with background
         current_y = self.get_y()

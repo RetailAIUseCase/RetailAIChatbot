@@ -4,14 +4,17 @@ Main FastAPI application
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.auth.routes import router as auth_router
+from app.routes.auth_routes import router as auth_router
 from app.database.connection import db
 from app.config.settings import settings
-from app.projects.routes import router as projects_router
-from app.chat.sql_routes import router as sql_chat_router
-from app.documents.routes import router as uploaded_document_router
-from app.websocket.routes import router as websocket_router
-from app.purchase_order.routes import router as po_router
+from app.routes.project_routes import router as projects_router
+from app.routes.sql_routes import router as sql_chat_router
+from app.routes.document_routes import router as uploaded_document_router
+from app.routes.websocket_routes import router as websocket_router
+from app.routes.purchase_order_routes import router as po_router
+# Add to your main.py
+from app.routes.visualization_routes import router as visualization_router
+
 import logging
 
 # Configure logging
@@ -59,6 +62,7 @@ app.include_router(sql_chat_router)
 app.include_router(uploaded_document_router)
 app.include_router(websocket_router)
 app.include_router(po_router)
+app.include_router(visualization_router)
 
 @app.get("/")
 async def root():

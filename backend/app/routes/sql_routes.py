@@ -40,6 +40,9 @@ class SQLChatResponse(BaseModel):
 
     po_workflow: Optional[Dict[str, Any]] = None  # PO workflow details
     po_suggestion: Optional[Dict[str, Any]] = None  # PO suggestions from SQL results
+    chart: Optional[Dict[str, Any]] = None
+    chart_suggestions: Optional[List[str]] = None
+    
 
 @router.post("/query", response_model=SQLChatResponse)
 async def chat_with_database(
@@ -114,7 +117,9 @@ async def chat_with_database(
             # retrieval_stats=retrieval_stats,
             # context_sources=context_sources,
             po_workflow=response.get("po_workflow"),     
-            po_suggestion=response.get("po_suggestion")
+            po_suggestion=response.get("po_suggestion"),
+            chart=response.get("chart"),  # ← ADD THIS
+            chart_suggestions=response.get("chart_suggestions")  # ← ADD THIS
         )
         
     except HTTPException:

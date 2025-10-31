@@ -20,3 +20,5 @@ python-docx==1.1.0
 simplejson
 fpdf2
 sendgrid==6.12.5
+plotly
+pandas

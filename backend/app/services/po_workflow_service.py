@@ -838,11 +838,24 @@ class POWorkflowService:
             filters = user_intent.get('filters_to_apply', {}) if user_intent else {}
             
             # Base query
-            base_query = f""" If query is related to shortfall, check if there are enough at hand stock of SKU to fulfill order for date '{order_date}'
-                If the at hand stock (as at_hand_stock) of SKU is not sufficient, then return the additional cases i.e., "order quantity" minus "at hand stock quantity", of SKU to be produced (as sku_shortfall_count)
-                Include order number (as order_number) and return sku_shortfall_count with details of each SKU shortfall also the order quantity (as sku_order_quantity).
-                Return only rows where sku_shortfall_count is greater than 0
-                If no shortfall exists, return empty result."""
+            # base_query = f""" If query is related to shortfall, check if there are enough at hand stock of SKU to fulfill order for date '{order_date}'
+            #     If the at hand stock (as at_hand_stock) of SKU is not sufficient, then return the additional cases i.e., "order quantity" minus "at hand stock quantity", of SKU to be produced (as sku_shortfall_count)
+            #     Include order number (as order_number) and return sku_shortfall_count with details of each SKU shortfall also the order quantity (as sku_order_quantity).
+            #     Return only rows where sku_shortfall_count is greater than 0
+            #     If no shortfall exists (all at_hand_stock >= order quantity), return empty result"""
+            base_query = f"""
+            If query is related to shortfall, check if there are enough **current actual at hand stock** (real-time available inventory, not projected or forecasted stock) of SKU to fulfill customer orders for date '{order_date}'.
+
+            Compare the **current available at hand stock** (as at_hand_stock) of SKU with the order quantity:
+            - If the at hand stock of SKU is not sufficient, then return the additional cases i.e., "order quantity" minus "at hand stock quantity", of SKU to be produced (as sku_shortfall_count)
+            - Include order number (as order_number) and return sku_shortfall_count with details of each SKU shortfall also the order quantity (as sku_order_quantity)
+
+            **Important:** Use current real-time inventory availability , NOT projected quantities, NOT production history, NOT forecasted stock.
+
+            Return only rows where sku_shortfall_count is greater than 0.
+            If no shortfall exists (all at_hand_stock >= order quantity), return empty result.
+            """
+
             
             if user_intent and user_intent.get('intent_type') != 'all':
                 intent_type = user_intent.get('intent_type')
@@ -867,11 +880,12 @@ class POWorkflowService:
             # Build final analysis query
             if trigger_query:
                 analysis_query = f"""
-                    Based on the user query: '{trigger_query}'
+                    {base_query}
+                    User query: '{trigger_query}'
                     {intent_scope}
                     Business Rules available : {json.dumps(business_rules, indent=2)}
                     Conversation History: {conversation_context}
-                    I need to check or modify as per user requirements (as per user query or conversation history) and business rules: {base_query} 
+                    **IMPORTANT:** If user query modifies the standard logic, apply modifications BUT always use CURRENT ACTUAL stock data, not projected/forecast/planned data. 
 
                     """
             else:
@@ -976,7 +990,8 @@ class POWorkflowService:
         for sku_data in sku_shortfalls:
             summary_lines.append(
                 f"- Order {sku_data['order_number']}: SKU {sku_data['sku']}"
-                f" to fulfill order quantity {sku_data['sku_order_quantity']} cases needs {sku_data['sku_shortfall_count']} additional cases"
+                f" to fulfill SKU order quantity, fall short of {sku_data['sku_shortfall_count']} additional cases"
+                # f" to fulfill SKU order quantity {sku_data['sku_order_quantity']} cases needs {sku_data['sku_shortfall_count']} additional cases"
             )
         return "\n".join(summary_lines)
     
@@ -1003,35 +1018,62 @@ class POWorkflowService:
                 if material_cat:
                     material_cat_list = "', '".join(material_cat)
                     intent_context = f"\n\n**User specifically requested these material category: {material_cat_list}**\nFocus on these materials only, If it's all, consider all the material categories without any filtering."
+            base_query = f"""
+                    CONTEXT: We have SKU shortfalls for order date '{order_date}': {sku_shortfall_summary}
+                    OBJECTIVE: Check the shortfall of each of the packaging materials required to produce these additional SKU cases.
+                    CALCULATION LOGIC: 
+                        1. Find the **bill of materials (BOM) or material composition** for each shortfall SKU to determine which packaging materials are needed and in what quantity
+                        2. Calculate **total required quantity** of each packaging material 
+                        3. Compare with **current actual at hand stock** (real-time available inventory) of packaging materials
+                        4.Calculate shortfall of each of the packaging materials as material_shortfall_count = MAX(0, required_quantity - at_hand_stock)
+                    MATERIAL FILTERING:
+                        - Include ONLY materials where material_category = 'Packaging Material' (or similar packaging category names)
+                        - Use **current real-time inventory** of packaging materials (NOT projected, NOT forecasted stock)
+                    {intent_context}
+                    Return format:
+                        - matnr (material identifier)
+                        - matdesc (material description)
+                        - material_category (e.g., packaging_material)
+                        - required_quantity (needed for SKU production)
+                        - at_hand_stock (current available stock)
+                        - material_shortfall_count (required quantity minus at hand stock quantity, only if its value is greater than 0)
+                        - werks (plant)
+                        - lgort (storage location)
+                        - used_for_skus (which SKUs this material is needed for)
+                    **FILTERS:**
+                        - Return ONLY rows where material_shortfall_count > 0
+                        - Material category must be packaging material type
 
-            analysis_query = f"""
-            Step 2 of procurement workflow:
-            User Query: {trigger_query}
-            Business Rules Available :{json.dumps(business_rules, indent=2)}
-            Conversation History: {conversation_context}
-            SKUs with shortfalls and order quantity:
-            {sku_shortfall_summary}
-            To fulfill order for date '{order_date}', check how much is the shortfall of each of the packaging materials, by calculating "required quantity" minus "at hand stock quantity", required to produce additional cases?
-            {intent_context}
-            I need to:
-            1. Calculate shortfall of each of the packaging materials as material_shortfall_count
-            2. Filter by Packaging Materials only
-            3. Return rows where material_shortfall_count greater than 0
-            4. Check Business rules for any specified related to this step
+                    If no packaging material shortfall exists, return empty result.
+                """
+            # analysis_query = f"""
+            # Step 2 of procurement workflow:
+            # User Query: {trigger_query}
+            # Business Rules Available :{json.dumps(business_rules, indent=2)}
+            # Conversation History: {conversation_context}
+            # SKUs with shortfalls and order quantity:
+            # {sku_shortfall_summary}
+            # To fulfill order for date '{order_date}', check how much is the shortfall of each of the packaging materials, by calculating "required quantity" minus "at hand stock quantity", required to produce additional cases?
+            # {intent_context}
+            # I need to:
+            # 1. Calculate shortfall of each of the packaging materials as material_shortfall_count
+            # 2. Filter by Packaging Materials only
+            # 3. Return rows where material_shortfall_count greater than 0
+            # 4. Check Business rules for any specified related to this step
             
-            Return format:
-            - matnr (material identifier)
-            - matdesc (material description)
-            - material_category (e.g., packaging_material)
-            - required_quantity (needed for SKU production)
-            - at_hand_stock (current available stock)
-            - material_shortfall_count (required quantity minus at hand stock quantity, only if its value is greater than 0)
-            - werks (plant)
-            - lgort (storage location)
-            - used_for_skus (which SKUs this material is needed for)
+            # Return format:
+            # - matnr (material identifier)
+            # - matdesc (material description)
+            # - material_category (e.g., packaging_material)
+            # - required_quantity (needed for SKU production)
+            # - at_hand_stock (current available stock)
+            # - material_shortfall_count (required quantity minus at hand stock quantity, only if its value is greater than 0)
+            # - werks (plant)
+            # - lgort (storage location)
+            # - used_for_skus (which SKUs this material is needed for)
             
-            Return rows where material_shortfall_count is greater than 0.
-            """
+            # Return rows where material_shortfall_count is greater than 0.
+            # """
 
             # analysis_query = f"""
             # As we fall short of {total_sku_shortfall} cases to fulfill order for date '{order_date}',
@@ -1040,6 +1082,29 @@ class POWorkflowService:
             # Filter by material category 'packaging material' or 'Packaging Material' only.
             # Include material ID, description, and shortfall quantity for each packaging material.
             # """
+            if trigger_query:
+                analysis_query = f"""
+                    {base_query}
+
+                    **USER CONTEXT:**
+                    User Query: "{trigger_query}"
+
+                    **BUSINESS RULES TO CONSIDER:**
+                    {json.dumps(business_rules, indent=2)}
+
+                    **CONVERSATION HISTORY:**
+                    {conversation_context}
+
+                    **IMPORTANT:** Apply business rules and user modifications, but always use current actual at-hand stock of packaging materials, not projected/forecasted data.
+                    """
+            else:
+                analysis_query = f"""
+                    Step 2 of procurement workflow:
+                    {base_query}
+
+                    Business Rules Available: {json.dumps(business_rules, indent=2)}
+                    """
+
             from app.services.rag_sql_service import rag_sql_service
             # Get embedding and relevant context
             query_embedding = await rag_sql_service.embed_query(analysis_query)
