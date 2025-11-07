@@ -79,7 +79,7 @@ class Database:
                 tables_to_check = ['users', 'projects', 'documents', 'conversations', 
                                 'metadata_embeddings', 'business_logic_embeddings', 
                                 'reference_embeddings', 'chat_messages',
-                                'purchase_orders', 'po_line_items', 'po_approval_requests', 'po_workflows']
+                                'purchase_orders', 'po_line_items', 'po_approval_requests', 'po_workflows', 'chart_history']
                 
                 existing_tables = await connection.fetch("""
                     SELECT table_name 
@@ -105,7 +105,7 @@ class Database:
                     'idx_po_workflow_status', 
                     #'idx_notifications_user',
                     'idx_po_user_project', 'idx_po_status', 'idx_po_line_items_po_number', 'idx_po_order_date', 'idx_po_user_project_date',
-                    'idx_po_approval_token'
+                    'idx_po_approval_token', 'idx_chart_conversation','idx_chart_user', 'idx_chart_project'
                 ]
                 
                 existing_indexes = await connection.fetch("""
@@ -136,7 +136,7 @@ class Database:
         # Order matters for foreign key constraints
         table_order = ['users', 'projects', 'documents', 'conversations', 
                     'metadata_embeddings', 'business_logic_embeddings', 
-                    'reference_embeddings', 'chat_messages', 'purchase_orders', 'po_line_items', 'po_approval_requests', 'po_workflows']
+                    'reference_embeddings', 'chat_messages', 'purchase_orders', 'po_line_items', 'po_approval_requests', 'po_workflows', 'chart_history']
         
         table_queries = {
             'users': """
@@ -322,9 +322,24 @@ class Database:
                     trigger_query TEXT,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-            """
-
+                );""",
+            
+            'chart_history': """
+                CREATE TABLE IF NOT EXISTS chart_history (
+                    id SERIAL PRIMARY KEY,
+                    chart_id VARCHAR(255) UNIQUE NOT NULL,
+                    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+                    chart_type VARCHAR(50) NOT NULL,
+                    title TEXT NOT NULL,
+                    chart_json TEXT NOT NULL,
+                    chart_html TEXT NOT NULL,
+                    chart_png_base64 TEXT,
+                    config JSONB,
+                    data_summary JSONB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );"""
         }
         
         for table in table_order:
@@ -359,7 +374,10 @@ class Database:
             'idx_po_line_items_po_number': "CREATE INDEX IF NOT EXISTS idx_po_line_items_po_number ON po_line_items(po_number);",
             'idx_po_order_date': "CREATE INDEX IF NOT EXISTS idx_po_order_date ON purchase_orders(order_date);",
             'idx_po_user_project_date': "CREATE INDEX IF NOT EXISTS idx_po_user_project_date ON purchase_orders(user_id, project_id, order_date);",
-            'idx_po_approval_token': "CREATE INDEX IF NOT EXISTS idx_po_approval_token ON po_approval_requests(approval_token);"
+            'idx_po_approval_token': "CREATE INDEX IF NOT EXISTS idx_po_approval_token ON po_approval_requests(approval_token);",
+            'idx_chart_conversation': "CREATE INDEX idx_chart_conversation ON chart_history(conversation_id);",
+            'idx_chart_user': "CREATE INDEX idx_chart_user ON chart_history(user_id);",
+            'idx_chart_project': "CREATE INDEX idx_chart_project ON chart_history(project_id);",
         }
         
         # Create basic indexes first (fast)
@@ -390,6 +408,7 @@ class Database:
                 ALTER TABLE po_line_items ENABLE ROW LEVEL SECURITY;
                 ALTER TABLE po_approval_requests ENABLE ROW LEVEL SECURITY;
                 ALTER TABLE po_workflows ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE chart_history ENABLE ROW LEVEL SECURITY;
                 -- ALTER TABLE purchase_notifications ENABLE ROW LEVEL SECURITY;
                 ALTER TABLE po_approval_requests DROP CONSTRAINT unique_po_number;
                 ALTER TABLE po_approval_requests ADD CONSTRAINT unique_po_number UNIQUE (po_number);
@@ -1364,212 +1383,213 @@ class Database:
         if isinstance(date_input, str):
             return datetime.strptime(date_input, '%Y-%m-%d').date()
         return date_input
+    
+    async def store_chart_in_history(
+        self,
+        chart: Dict[str, Any],
+        conversation_id: str,
+        user_id: int,
+        project_id: str
+    ):
+        """Store chart in database using pool connection"""
+        
+        try:
+            query = """
+                INSERT INTO chart_history 
+                (chart_id, conversation_id, user_id, project_id, chart_type, 
+                title, chart_json, chart_html, chart_png_base64, config, data_summary, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+            """
+            
+            async with db.pool.acquire() as connection:
+                await connection.execute(
+                    query,
+                    chart['chart_id'],
+                    conversation_id,
+                    user_id,
+                    project_id,
+                    chart['chart_type'],
+                    chart['title'],
+                    chart['chart_json'],
+                    chart['chart_html'],
+                    chart.get('chart_png_base64'),
+                    json.dumps(chart.get('columns_used', {})),
+                    json.dumps({'data_points': chart.get('data_points', 0)})
+                )
+            
+            logger.info(f"Stored chart {chart['chart_id']} in history")
+        except Exception as e:
+            logger.error(f"Failed to store chart: {e}")
+
+    async def get_conversation_charts(
+        self,
+        conversation_id: str,
+        user_id: int
+    ) -> List[Dict[str, Any]]:
+        """Get all charts from a conversation"""
+        
+        if not self.pool:
+            raise Exception("Database pool not initialized")
+        
+        try:
+            query = """
+                SELECT chart_id, chart_type, title, config, data_summary, created_at
+                FROM chart_history
+                WHERE conversation_id = $1 AND user_id = $2
+                ORDER BY created_at DESC
+            """
+            
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                rows = await connection.fetch(query, conversation_id, user_id)
+                
+                return [dict(row) for row in rows]
+        
+        except Exception as e:
+            logger.error(f"Error fetching conversation charts: {e}")
+            raise
+
+
+    async def get_charts_by_ids(
+        self,
+        chart_ids: List[str],
+        user_id: int
+    ) -> List[Dict[str, Any]]:
+        """Get specific charts by IDs"""
+        
+        if not self.pool:
+            raise Exception("Database pool not initialized")
+        
+        try:
+            query = """
+                SELECT chart_id, chart_type, title, chart_png_base64, 
+                    data_summary, created_at
+                FROM chart_history
+                WHERE chart_id = ANY($1) AND user_id = $2
+                ORDER BY created_at DESC
+            """
+            
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                rows = await connection.fetch(query, chart_ids, user_id)
+                
+                return [dict(row) for row in rows]
+        
+        except Exception as e:
+            logger.error(f"Error fetching charts by IDs: {e}")
+            raise
+
+
+    async def delete_chart(
+        self,
+        chart_id: str,
+        user_id: int
+    ) -> bool:
+        """Delete a chart from history"""
+        
+        if not self.pool:
+            raise Exception("Database pool not initialized")
+        
+        try:
+            query = """
+                DELETE FROM chart_history
+                WHERE chart_id = $1 AND user_id = $2
+                RETURNING chart_id
+            """
+            
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                result = await connection.fetchval(query, chart_id, user_id)
+                
+                return result is not None
+        
+        except Exception as e:
+            logger.error(f"Error deleting chart: {e}")
+            raise
+
+
+    async def get_chart_by_id(
+        self,
+        chart_id: str,
+        user_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get a single chart by ID"""
+        
+        if not self.pool:
+            raise Exception("Database pool not initialized")
+        
+        try:
+            query = """
+                SELECT chart_id, chart_type, title, chart_json, chart_html,
+                    chart_png_base64, data_summary, config, created_at
+                FROM chart_history
+                WHERE chart_id = $1 AND user_id = $2
+            """
+            
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                row = await connection.fetchrow(query, chart_id, user_id)
+                
+                return dict(row) if row else None
+        
+        except Exception as e:
+            logger.error(f"Error fetching chart: {e}")
+            raise
+
+
+    async def get_user_chart_statistics(
+        self,
+        user_id: int,
+        project_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get chart generation statistics for user"""
+        
+        if not self.pool:
+            raise Exception("Database pool not initialized")
+        
+        try:
+            if project_id:
+                query = """
+                    SELECT 
+                        COUNT(*) as total_charts,
+                        COUNT(DISTINCT chart_type) as unique_types,
+                        COUNT(DISTINCT conversation_id) as conversations_with_charts,
+                        MAX(created_at) as last_chart_generated
+                    FROM chart_history
+                    WHERE user_id = $1
+                        AND conversation_id IN (
+                            SELECT DISTINCT conversation_id 
+                            FROM conversations 
+                            WHERE project_id = $2
+                        )
+                """
+                params = [user_id, project_id]
+            else:
+                query = """
+                    SELECT 
+                        COUNT(*) as total_charts,
+                        COUNT(DISTINCT chart_type) as unique_types,
+                        COUNT(DISTINCT conversation_id) as conversations_with_charts,
+                        MAX(created_at) as last_chart_generated
+                    FROM chart_history
+                    WHERE user_id = $1
+                """
+                params = [user_id]
+            
+            async with self.pool.acquire() as connection:
+                await connection.execute(f"SET LOCAL app.current_user_id = {user_id}")
+                row = await connection.fetchrow(query, *params)
+                
+                return {
+                    "total_charts": row['total_charts'] or 0,
+                    "unique_types": row['unique_types'] or 0,
+                    "conversations_with_charts": row['conversations_with_charts'] or 0,
+                    "last_chart_generated": row['last_chart_generated'].isoformat() if row['last_chart_generated'] else None
+                }
+        
+        except Exception as e:
+            logger.error(f"Error fetching chart statistics: {e}")
+            raise
+
 # Global database instance
 db = Database()
-
-# async def create_all_tables(self):
-#     """Create all necessary tables"""
-#     basic_tables_query = """
-#             -- Enable required extensions FIRST
-#             CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-#             CREATE EXTENSION IF NOT EXISTS vector;
-
-#             -- Users table (MUST BE FIRST - other tables reference this)
-#             CREATE TABLE IF NOT EXISTS users (
-#                 id SERIAL PRIMARY KEY,
-#                 email VARCHAR(255) UNIQUE NOT NULL,
-#                 hashed_password VARCHAR(255) NOT NULL,
-#                 full_name VARCHAR(255),
-#                 is_active BOOLEAN DEFAULT TRUE,
-#                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-#                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-#             );
-
-#             -- Projects table (SECOND - documents reference this)
-#             CREATE TABLE IF NOT EXISTS projects (
-#                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-#                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-#                 name VARCHAR(255) NOT NULL,
-#                 description TEXT,
-#                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-#                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-#                 UNIQUE(user_id, name)
-#             );
-        
-#             -- Documents table (THIRD - embedding tables reference this)
-#             CREATE TABLE IF NOT EXISTS documents (
-#                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-#                 project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-#                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-#                 name VARCHAR(255) NOT NULL,
-#                 original_filename VARCHAR(255) NOT NULL,
-#                 file_path VARCHAR(500) NOT NULL,
-#                 bucket_name VARCHAR(100) NOT NULL,
-#                 file_size BIGINT,
-#                 mime_type VARCHAR(100),
-#                 document_type VARCHAR(50) NOT NULL CHECK (document_type IN ('metadata', 'businesslogic', 'references')),
-#                 upload_status VARCHAR(50) DEFAULT 'completed' CHECK (upload_status IN ('processing', 'completed', 'failed')),
-#                 embedding_status VARCHAR(50) DEFAULT 'pending' CHECK (embedding_status IN ('pending', 'processing', 'completed', 'failed')),
-#                 processing_details JSONB,
-#                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-#                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-#             );
-#             CREATE TABLE IF NOT EXISTS conversations (
-#                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-#                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-#                 project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-#                 title VARCHAR(255),
-#                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-#                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-#             );
-#         """
-#     embedding_tables_query="""
-#             -- Metadata embeddings (schema tables, columns, relationships)
-#             CREATE TABLE IF NOT EXISTS metadata_embeddings (
-#                     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-#                     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-#                     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-#                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-#                     table_name VARCHAR(255),
-#                     content_type VARCHAR(50) NOT NULL CHECK (content_type IN ('table', 'column', 'relationship')),
-#                     content TEXT NOT NULL,
-#                     embedding vector(1536),
-#                     metadata JSONB,
-#                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-#                 );
-
-#             -- Business logic embeddings (rules, workflows)
-#             CREATE TABLE IF NOT EXISTS business_logic_embeddings (
-#                     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-#                     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-#                     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-#                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-#                     rule_number INTEGER,
-#                     content TEXT NOT NULL,
-#                     embedding vector(1536),
-#                     metadata JSONB,
-#                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-#                 );
-
-#             -- Reference document embeddings (supporting materials)
-#             CREATE TABLE IF NOT EXISTS reference_embeddings (
-#                     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-#                     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-#                     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-#                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-#                     chunk_index INTEGER NOT NULL,
-#                     content TEXT NOT NULL,
-#                     embedding vector(1536),
-#                     metadata JSONB,
-#                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-#                     UNIQUE (document_id, user_id, project_id, chunk_index)
-#                 );
-#             """
-#     chat_history_query="""
-#             CREATE TABLE IF NOT EXISTS chat_messages (
-#                 id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-#                 conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-#                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-#                 project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-#                 role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant')),
-#                 content TEXT NOT NULL,
-#                 sql_query TEXT,
-#                 query_result JSONB,
-#                 intent VARCHAR(100),
-#                 tables_used TEXT[],
-#                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-#             );
-#             """
-#     indexes_query="""
-#             -- Create basic indexes
-#             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-#             CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
-#             CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
-#             CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);
-        
-#             -- Metadata embedding indexes
-#             CREATE INDEX IF NOT EXISTS idx_metadata_embeddings_document_id ON metadata_embeddings(document_id);
-#             CREATE INDEX IF NOT EXISTS idx_metadata_embeddings_project_id ON metadata_embeddings(project_id);
-#             CREATE INDEX IF NOT EXISTS idx_metadata_embeddings_user_id ON metadata_embeddings(user_id);
-        
-#             -- Business logic embedding indexes
-#             CREATE INDEX IF NOT EXISTS idx_business_logic_embeddings_document_id ON business_logic_embeddings(document_id);
-#             CREATE INDEX IF NOT EXISTS idx_business_logic_embeddings_project_id ON business_logic_embeddings(project_id);
-#             CREATE INDEX IF NOT EXISTS idx_business_logic_embeddings_user_id ON business_logic_embeddings(user_id);
-        
-#             -- Reference embedding indexes
-#             CREATE INDEX IF NOT EXISTS idx_reference_embeddings_document_id ON reference_embeddings(document_id);
-#             CREATE INDEX IF NOT EXISTS idx_reference_embeddings_project_id ON reference_embeddings(project_id);
-#             CREATE INDEX IF NOT EXISTS idx_reference_embeddings_user_id ON reference_embeddings(user_id);
-
-#             -- Vector search indexes (Create after tables exist)
-#             CREATE INDEX IF NOT EXISTS idx_metadata_embeddings_hnsw 
-#             ON metadata_embeddings USING hnsw(embedding vector_cosine_ops) 
-#             WITH (m = 16, ef_construction = 64);
-        
-#             CREATE INDEX IF NOT EXISTS idx_business_logic_embeddings_hnsw 
-#             ON business_logic_embeddings USING hnsw(embedding vector_cosine_ops) 
-#             WITH (m = 16, ef_construction = 64);
-        
-#             CREATE INDEX IF NOT EXISTS idx_reference_embeddings_hnsw 
-#             ON reference_embeddings USING hnsw(embedding vector_cosine_ops) 
-#             WITH (m = 16, ef_construction = 64);
-
-#             -- Enable RLS for security
-#             ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
-#             ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
-#             ALTER TABLE metadata_embeddings ENABLE ROW LEVEL SECURITY;
-#             ALTER TABLE business_logic_embeddings ENABLE ROW LEVEL SECURITY;
-#             ALTER TABLE reference_embeddings ENABLE ROW LEVEL SECURITY;
-#             ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
-#             ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
-    
-#             -- Drop existing policies if they exist
-#             DROP POLICY IF EXISTS "users_own_projects" ON projects;
-#             DROP POLICY IF EXISTS "users_own_documents" ON documents;
-#             DROP POLICY IF EXISTS "users_own_metadata_embeddings" ON metadata_embeddings;
-#             DROP POLICY IF EXISTS "users_own_business_logic_embeddings" ON business_logic_embeddings;
-#             DROP POLICY IF EXISTS "users_own_reference_embeddings" ON reference_embeddings;
-#             DROP POLICY IF EXISTS "users_own_conversations" ON conversations;
-#             DROP POLICY IF EXISTS "users_own_chat_messages" ON chat_messages;
-#             -- Create RLS Policies
-#             CREATE POLICY "users_own_projects" ON projects
-#                 FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
-
-#             CREATE POLICY "users_own_documents" ON documents
-#             FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
-        
-#             CREATE POLICY "users_own_metadata_embeddings" ON metadata_embeddings
-#                 FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
-            
-#             CREATE POLICY "users_own_business_logic_embeddings" ON business_logic_embeddings
-#                 FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
-
-#             CREATE POLICY "users_own_reference_embeddings" ON reference_embeddings
-#                 FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
-
-#             CREATE POLICY "users_own_conversations" ON conversations
-#                 FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
-
-#             CREATE POLICY "users_own_chat_messages" ON chat_messages
-#                 FOR ALL USING (user_id = current_setting('app.current_user_id', true)::integer);
-#         """
-        
-#     try:
-#         async with self.pool.acquire() as connection:
-#             logger.info("Creating basic tables...")
-#             await connection.execute(basic_tables_query)
-        
-#             logger.info("Creating embedding tables...")
-#             await connection.execute(embedding_tables_query)
-
-#             logger.info("Creating chat history tables...")
-#             await connection.execute(chat_history_query)
-        
-#             logger.info("Creating indexes...")
-#             await connection.execute(indexes_query)
-        
-#             logger.info("All tables created successfully")
-#     except Exception as e:
-#         logger.error(f"Failed to create tables: {e}")
-#         raise

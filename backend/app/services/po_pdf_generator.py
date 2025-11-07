@@ -57,7 +57,7 @@ class CorporatePOPDFGenerator(FPDF):
             logo_path = base_dir / "static" / "images" / "Nagarro_logo_new.png"
             
             if logo_path.exists():
-                logger.info(f"✅ Logo found at: {logo_path}")
+                # logger.info(f"✅ Logo found at: {logo_path}")
                 return str(logo_path)
             else:
                 logger.warning(f"❌ Logo not found at: {logo_path}")

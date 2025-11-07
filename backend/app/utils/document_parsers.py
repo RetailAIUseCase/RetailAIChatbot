@@ -795,7 +795,7 @@ class BusinessLogicParser(DocumentParser):
         get_embedding_func
     ) -> Dict[str, int]:
         """Create business logic embeddings with smart deduplication"""
-        stats = {"inserted": 0, "updated": 0, "skipped": 0, "reused": 0}
+        stats = {"inserted": 0, "updated": 0, "skipped": 0, "reused": 0, "relinked": 0}
         
         for rule_idx, rule_text in enumerate(rules):
             if not rule_text.strip():
@@ -993,10 +993,10 @@ class ReferenceParser(DocumentParser):
         get_embedding_func
     ) -> Dict[str, int]:
         """Create reference embeddings with smart deduplication"""
-        stats = {"inserted": 0, "updated": 0, "skipped": 0, "reused": 0}
+        stats = {"inserted": 0, "updated": 0, "skipped": 0, "reused": 0, "relinked": 0}
         
         for chunk_idx, chunk_text in enumerate(chunks):
-            if not chunk_text.strip() or len(chunk_text.strip()) <= 50:
+            if not chunk_text.strip():
                 continue
                     
             try:
@@ -1008,16 +1008,27 @@ class ReferenceParser(DocumentParser):
                 )
                 
                 if existing_by_hash:
-                    stats["reused"] += 1
-                    logger.info(f"Reused existing reference embedding for chunk {chunk_idx}")
+                    # Case A: Content exists but belongs to a different document - RELINK
+                    if existing_by_hash.get("document_id") != document_id:
+                        await cls._update_reference_document_id(
+                            connection,
+                            existing_by_hash["id"],
+                            document_id
+                        )
+                        stats["relinked"] += 1
+                        logger.info(f"Relinked existing embedding (chunk {chunk_idx}) to new document ID {document_id}")
+                    else:
+                        # Case B: Content exists and already belongs to this document - REUSE
+                        stats["reused"] += 1
+                        logger.info(f"Reused existing reference embedding for chunk {chunk_idx}")
                     continue
                 
-                # Check if embedding exists for this specific document+chunk
+                # Check if embedding exists for this specific document+chunk position
                 existing_for_document = await cls._check_existing_reference_embedding(
-                    connection, document_id, user_id, project_id, chunk_idx
+                    connection, user_id, project_id, chunk_idx
                 )
                 
-                # Generate embedding only when needed
+                # Generate embedding only when needed (not found by hash)
                 new_embedding = await get_embedding_func(chunk_text)
                 
                 metadata = {
@@ -1028,7 +1039,7 @@ class ReferenceParser(DocumentParser):
                 }
                 
                 if existing_for_document:
-                    # Update existing embedding
+                    # Case C: Different content at the same chunk position - UPDATE
                     await cls._update_reference_embedding(
                         connection, document_id, user_id, project_id,
                         chunk_idx, chunk_text, new_embedding, metadata
@@ -1036,7 +1047,7 @@ class ReferenceParser(DocumentParser):
                     stats["updated"] += 1
                     logger.info(f"Updated reference embedding for chunk {chunk_idx}")
                 else:
-                    # Insert new embedding
+                    # Case D: Completely new content at new position - INSERT
                     await cls._insert_reference_embedding(
                         connection, document_id, user_id, project_id,
                         chunk_idx, chunk_text, new_embedding, metadata
@@ -1047,51 +1058,22 @@ class ReferenceParser(DocumentParser):
             except Exception as e:
                 logger.error(f"Error processing reference chunk {chunk_idx}: {e}")
                 continue
-                
-            #     new_embedding = await get_embedding_func(chunk_text)
-            #     should_update, action = cls.should_update_embedding(
-            #         existing, chunk_text, new_embedding
-            #     )
-                
-            #     if should_update:
-            #         metadata = {
-            #             "chunk_index": chunk_idx,
-            #             "chunk_type": "reference_content",
-            #             "word_count": len(chunk_text.split()),
-            #             "content_hash": cls.generate_content_hash(chunk_text)
-            #         }
-                    
-            #         if action == "INSERT":
-            #             await cls._insert_reference_embedding(
-            #                 connection, document_id, user_id, project_id,
-            #                 chunk_idx, chunk_text, new_embedding, metadata
-            #             )
-            #             stats["inserted"] += 1
-            #         else:  # UPDATE
-            #             await cls._update_reference_embedding(
-            #                 connection, document_id, user_id, project_id,
-            #                 chunk_idx, chunk_text, new_embedding, metadata
-            #             )
-            #             stats["updated"] += 1
-            #     else:
-            #         stats["skipped"] += 1
-                    
         
         return stats
 
     @staticmethod
     async def _check_existing_reference_embedding(
-        connection, document_id: str, user_id: int, project_id: str, chunk_index: int
+        connection, user_id: int, project_id: str, chunk_index: int
     ) -> Optional[Dict[str, Any]]:
         """Check if reference embedding already exists for this chunk"""
         query = """
         SELECT content, embedding, metadata 
         FROM reference_embeddings 
-        WHERE document_id = $1 AND user_id = $2 AND project_id = $3 AND chunk_index = $4
+        WHERE user_id = $1 AND project_id = $2 AND chunk_index = $3
         """
         
         try:
-            row = await connection.fetchrow(query, document_id, user_id, project_id, chunk_index)
+            row = await connection.fetchrow(query, user_id, project_id, chunk_index)
             return dict(row) if row else None
         except Exception as e:
             logger.error(f"Error checking existing reference embedding: {e}")
@@ -1124,8 +1106,8 @@ class ReferenceParser(DocumentParser):
         """Update existing reference embedding"""
         update_query = """
         UPDATE reference_embeddings 
-        SET content = $1, embedding = $2::vector, metadata = $3, created_at = CURRENT_TIMESTAMP
-        WHERE document_id = $4 AND user_id = $5 AND project_id = $6 AND chunk_index = $7
+        SET content = $1, embedding = $2::vector, metadata = $3, document_id = $4, created_at = CURRENT_TIMESTAMP
+        WHERE user_id = $5 AND project_id = $6 AND chunk_index = $7
         """
         # Debug logging
         logger.debug(f"Updating reference embedding: chunk={chunk_index}")
@@ -1134,6 +1116,15 @@ class ReferenceParser(DocumentParser):
             update_query, content, embedding, json.dumps(metadata),
             document_id, user_id, project_id, chunk_index
         )
+    @staticmethod
+    async def _update_reference_document_id(connection, row_id: str, new_document_id: str):
+        """Update the document_id for an existing embedding record - RELINK operation"""
+        query = """
+        UPDATE reference_embeddings
+        SET document_id = $1, created_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+        """
+        await connection.execute(query, new_document_id, row_id)
 
     @classmethod
     async def batch_insert_reference_embeddings(

@@ -103,7 +103,7 @@ class EmailService:
                 cache_size=100
             )
             
-            logger.info(f"✅ Template environment setup successfully at: {template_dir}")
+            # logger.info(f"✅ Template environment setup successfully at: {template_dir}")
             return env
             
         except Exception as e:

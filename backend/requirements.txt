@@ -22,3 +22,5 @@ fpdf2
 sendgrid==6.12.5
 plotly
 pandas
+reportlab
+kaleido

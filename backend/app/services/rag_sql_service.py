@@ -13,6 +13,7 @@ from app.config.settings import settings
 from app.utils.date_parser import parse_user_date_safe
 from app.services.po_workflow_service import po_workflow_service
 # from app.services.enhanced_intelligent_po_service_combined import enhanced_intelligent_po_service_combined
+from app.services.visualization_service import chart_service
 import logging
 
 from app.utils.date_parser_llm import LLMDateParser
@@ -70,7 +71,7 @@ class SQLRAGService:
                 
                 # Phase 3: Retrieve from reference embeddings
                 reference_results = await self._retrieve_reference_embeddings(
-                    connection, query_embedding, user_id, project_id, top_k//3, similarity_threshold
+                    connection, query_embedding, user_id, project_id, top_k, similarity_threshold
                 )
                 
                 return {
@@ -326,14 +327,14 @@ class SQLRAGService:
         # Business logic context
         if retrieval.get('business_logic'):
             business_context += "\nBUSINESS RULES & LOGIC:\n"
-            for rule in retrieval['business_logic'][:3]:  # Top 3 rules
+            for rule in retrieval['business_logic'][:10]:  # Top 10 rules
                 business_context += f"\nRule {rule['rule_number']} (similarity: {rule['similarity']:.2f}):\n{rule['content']}\n"
 
         # Reference context
         if retrieval.get('references'):
             reference_context += "\nREFERENCE DOCUMENTATION:\n"
-            for ref in retrieval['references'][:2]:  # Top 2 references
-                reference_context += f"\nReference (similarity: {ref['similarity']:.2f}):\n{ref['content'][:300]}...\n"
+            for ref in retrieval['references'][:10]:  # Top 10 references
+                reference_context += f"\nReference (similarity: {ref['similarity']:.2f}):\n{ref['content']}...\n"
         
         return db_context, business_context, reference_context
 
@@ -383,11 +384,11 @@ class SQLRAGService:
     
             Analyze this user query and previous conversation context and classify it into ONE of these intents:
             *NOTE*: Always look at the previous conversation context to get better understanding of what the user query is related to, 
-                    a simple "yes" can be related to any follow up resposne or can also be a confirmation to document generation conversation.
+                    a simple "yes" can be related to any follow up resposne or can also be a confirmation to document generation or visualization conversation.
 
             Current User Query: "{user_query}"
             Previous conversation context: {context}
-
+            **INTENTS:**
                 1. document_generation - User wants to generate/create documents either specifying using direct keyword or indirectly (PO, invoice, reports, etc.) or based on previous conversation result, 
                                         analyse it carefully as it can be a confirmation to previous suggestion/clarification as well.
                                         It can also be a confirmation or follow up to previous conversation related to document generation
@@ -410,6 +411,27 @@ class SQLRAGService:
                 - Short responses like "yes", "no", "okay", "generate it", "show me more"
                 - Context-dependent responses to assistant's questions
 
+                6. visualization - User EXPLICITLY wants to see data visualized in charts, graphs, or visual format
+                    - MUST have explicit visualization requests: chart, graph, plot, visualize, visualization, display as chart/graph, show me a chart
+                    - Examples: 
+                        * "show me a **chart** of projection quantity"
+                        * "**visualize** the trend using line graph"
+                        * "**plot** stock projection"
+                        * "explore the trend using a **line graph**"
+                        * "show this as a **bar chart**"
+                    - **NOT visualization**: "show me trend", "give me projection", "display stock levels" (these are sql_query)
+
+                7. chart_selection - User is selecting/refining a chart type from suggestions
+                    - Responses to chart type suggestions
+                    - Examples: "use bar chart", "I prefer the first option"
+            
+            **CRITICAL RULES FOR VISUALIZATION vs SQL_QUERY:**
+                - If query has words like "chart", "graph", "plot", "visualize", "visualization" → visualization
+                - If query has "trend", "projection", "forecast", BUT NO chart/graph or visualization related keywords → sql_query
+                - If user says "show me", "give me", "display" without chart/graph keywords → sql_query
+                - Only use visualization when user EXPLICITLY requests visual representation
+                - When in doubt between visualization and sql_query, choose sqlquery
+
             If intent doesn't fall into any of these categories, classify it by understanding the previous conversation context and return in 10-20 letters.
 
             Examples:
@@ -418,10 +440,15 @@ class SQLRAGService:
             - "What can you do?" → clarification
             - "Thanks!" → chit_chat
             - "How many customers do we have?" → sql_query
+            - "give me the stock projection trend" → sqlquery
+            - "show me projection quantity" → sqlquery
             - "create PO for next week" → document_generation
             - "generate purchase order for tomorrow" → document_generation
+            - "explore the trend of projected vs actual using a line graph" → visualization
+            - "visualize the stock levels" → visualization
+            - "show me a chart of inventory" → visualization
 
-            Respond with only the intent name: document_generation, sql_query, chit_chat, clarification or follow_up_response"""
+            Respond with only the intent name: document_generation, sql_query, chit_chat, clarification, follow_up_response, visualization, or chart_selection"""
 
         try:
             response = await self.client.chat.completions.create(
@@ -436,7 +463,7 @@ class SQLRAGService:
             #     is_po = await self._llm_verify_po_intent(user_query)
             #     return 'po_generation' if is_po else 'sql_query'
 
-            return intent if intent in ['document_generation', 'sql_query', 'chit_chat', 'clarification', 'follow_up_response'] else 'sql_query'
+            return intent if intent in ['document_generation', 'sql_query', 'chit_chat', 'clarification', 'follow_up_response', 'visualization', 'chart_selection'] else 'sql_query'
             
         except Exception as e:
             logger.error(f"Intent detection failed: {e}")
@@ -480,7 +507,7 @@ class SQLRAGService:
             "missing_parameters": ["param1", "param2"],
             "extracted_parameters": {{"param": "value"}},
             "can_generate_immediately": true/false,
-            "suggested_questions": ["question1?", "question2?"]
+            "suggested_next_questions": ["question1?", "question2?"]
         }}
         """
 
@@ -529,12 +556,13 @@ class SQLRAGService:
             - Be conversational
             - Be informative
             - Be creative to generate more natural language formal questions for business stakeholders
-            - Suggest questions based on the current available services - document generation, quering results from database using SQL queries
+            - Suggest questions based on the current available services - document generation, quering results from database using SQL queries, or analysing data using relevant chart (currently addressing basic chart types)
 
             Examples:
             - User-> show me material with shortfall System->"I notice shortfalls. Would you like me to generate Purchase order for these items?
             - Asking for vendor details - "Do you want to see vendor details?"
             - "Should I forecast next week’s demand?"
+            - "Do you want to analyse trend using line graph?"
 
             Respond in JSON only:
             {{
@@ -712,6 +740,7 @@ class SQLRAGService:
                     1. Understand user intent from their natural language query
                     2. Generate SQL queries when appropriate using the provided database schema
                     3. Provide comprehensive explanations of your analysis
+                    4. **Consider reference documentation for business policies, rules, and context**
 
                     CRITICAL RULES:
                     1. USE ONLY EXACT COLUMN NAMES from the schema - never assume or invent column names
@@ -721,6 +750,7 @@ class SQLRAGService:
                     5. PREVENT DUPLICATE ROWS - always consider using DISTINCT when joining tables
                     6. VALIDATE TABLE JOINS using the relationship information provided
                     7. USE PROPER AGGREGATION - when using subqueries, ensure they don't create duplicates
+                    8. **APPLY BUSINESS POLICIES from reference documentation when relevant to the query**
 
                     ANTI-DUPLICATION GUIDELINES:
                     - Use DISTINCT when selecting from joined tables that might have one-to-many relationships
@@ -752,6 +782,9 @@ class SQLRAGService:
                     Available Business Logic Context:
                     {business_context}
 
+                    Available Reference Documentation Context:
+                    {reference_context}
+
                     Instructions:
                     - Use the database schema information to generate accurate SQL queries
                     - Only use tables and columns explicitly mentioned in the schema information
@@ -759,6 +792,7 @@ class SQLRAGService:
                     - If you generate SQL, explain what the query does and why
                     - Consider previous conversation context for follow-up questions
                     - If you cannot generate SQL due to missing information, explain specifically what you need
+                    - **Always look for reference documentation for any additional policies, constraints, or rules**
 
                     SQL query related Rules: 
                     - Use proper JOINs based on foreign key relationships shown in schema
@@ -769,6 +803,7 @@ class SQLRAGService:
                     - Use exact column names as shown in schema
                     - Follow the grain and primary key constraints
                     - Don't select table name in quotes
+                    - Check for filter or constrain results based on policies mentioned in reference documentation
                     - Consider business rules when filtering or grouping data
 
                     Response Format:
@@ -978,9 +1013,28 @@ class SQLRAGService:
             )
             metadata = {}
 
-            # Store follow-up suggestions if available
-            if response.get("suggested_next_questions"):
-                metadata["suggested_next_questions"] = response["suggested_next_questions"]
+            # Store base metadata if present
+            if response.get("metadata"):
+                metadata.update(response["metadata"])
+            
+            # Store chart object 
+            if response.get("chart"):
+                metadata["chart"] = response["chart"]
+            
+            # Store follow-up suggestion
+            if response.get("followup_suggestions"):
+                metadata["followup_suggestions"] = response["followup_suggestions"]
+            
+            # Store visualization suggestions
+            if response.get("chart_suggestions"):
+                metadata["chart_suggestions"] = response["chart_suggestions"]
+            
+            # Store data insights
+            if response.get("data_insights"):
+                metadata["data_insights"] = response["data_insights"]
+
+            if response.get("requires_chart_selection"):
+                metadata["requires_chart_selection"] = True
 
             # Store follow-up execution info (if from handle_follow_up_confirmation)
             if response.get("action_type"):
@@ -989,6 +1043,11 @@ class SQLRAGService:
                     "selected_suggestion": response.get("selected_suggestion"),
                     "executed_query": response.get("action_query"),
                 }
+
+            # if response.get("metadata") and isinstance(response["metadata"], dict):
+            #     # The visualization handler already provides this structure
+            #     metadata = response["metadata"]
+                
             # Store assistant response
             await db.store_chat_message(
                 conversation_id=conversation_id,
@@ -1021,6 +1080,8 @@ class SQLRAGService:
                         meta = json.loads(meta)
                     except json.JSONDecodeError:
                         meta = {}  # fallback for malformed JSON
+                elif meta is None:
+                    meta = {}
                 conversation_history.append({
                     'role': msg['role'],
                     'content': msg['content'],
@@ -1350,18 +1411,386 @@ class SQLRAGService:
         
         return "I can help you query your database, analyze your data, and generate purchase orders.. Just ask me questions in natural language! For example: 'Show me sales data for last month' or 'How many customers do we have?'"
     
-    # def _check_shortfall_in_data(self, data: List[Dict]) -> bool:
-    #     """Check if SQL results indicate shortfall patterns"""
-    #     if not data:
-    #         return False
+    async def handle_visualization_request(
+        self,
+        user_query: str,
+        relevant_data: Dict[str, Any],
+        conversation_history: List[Dict],
+        user_id: int,
+        project_id: str,
+        conversation_id : str
+    ) -> Dict[str, Any]:
+        """Handle requests that need data visualization"""
         
-    #     data_str = str(data).lower()
-    #     shortfall_indicators = [
-    #         'shortfall', 'shortage', 'insufficient', 'negative', 
-    #         'below minimum', 'out of stock', 'low inventory'
-    #     ]
+        try:
+            # First, get the data via SQL
+            sql_result = await self.generate_sql_response(
+                user_query, 
+                relevant_data, 
+                conversation_history
+            )
+            
+            if not sql_result.get("query_result", {}).get("success"):
+                return {
+                    "intent": "visualization_failed",
+                    "explanation": "I couldn't retrieve the data needed for visualization.",
+                    "final_answer": sql_result.get("final_answer", "Unable to fetch data."),
+                    "confidence": 0.5
+                }
+            
+            data = sql_result["query_result"].get("data", [])
+            
+            if not data or len(data) == 0:
+                return {
+                    "intent": "visualization_no_data",
+                    "explanation": "No data available to visualize.",
+                    "final_answer": "I couldn't find any data to visualize for your query.",
+                    "confidence": 0.6,
+                    "sql_query": sql_result.get("sql_query")
+                }
+            # Keyword-based chart type detection 
+            detected_chart_type = chart_service._detect_chart_type_by_keywords(user_query)
+            
+            # If user explicitly specified chart type with high confidence
+            if detected_chart_type and detected_chart_type != "none":
+                data_sample = data[0] if data else {}
+                chart_title = await chart_service.generate_chart_title_by_llm(
+                    user_query, detected_chart_type, data_sample
+                )
+                
+                logger.info(f"⚡ Generating {detected_chart_type} chart with title: {chart_title}")
+                # Generate chart directly
+                chart_result = await chart_service.generate_chart(
+                    data=data,
+                    chart_type=detected_chart_type,
+                    title=chart_title,
+                    config=None,
+                    original_query=user_query
+                )
+                
+                if chart_result.get('success'):
+                    try:
+                        await db.store_chart_in_history(
+                            chart_result, conversation_id, user_id, project_id
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to store chart: {e}")
+                    
+                    return {
+                        "intent": "visualization_complete",
+                        "explanation": sql_result.get("explanation", ""),
+                        "final_answer": f"Here's your {detected_chart_type} chart:",
+                        "sql_query": sql_result.get("sql_query"),
+                        "query_result": sql_result.get("query_result"),
+                        "chart": {
+                            "success": chart_result['success'],
+                            "chart_id": chart_result['chart_id'],
+                            "chart_json": chart_result['chart_json'],
+                            "chart_html": chart_result['chart_html'],
+                            "chart_png_base64": chart_result.get('chart_png_base64'),
+                            "chart_type": chart_result['chart_type'],
+                            "title": chart_result['title'],
+                            "data_points": chart_result['data_points'],
+                            "columns_used": chart_result['columns_used'],
+                            "timestamp": chart_result['timestamp'],
+                            "followup_suggestions": chart_result.get('followup_suggestions', [])
+                        },
+                        "followup_suggestions": chart_result.get('followup_suggestions', []),
+                        "metadata": {
+                            "chart": chart_result,
+                            "followup_suggestions": chart_result.get('followup_suggestions', []),
+                            "is_direct_generation": True,
+                            "_pending_viz_data": {
+                                    'suggestions': {
+                                        'success': True,
+                                        'suggestions': [{
+                                            'chart_type': detected_chart_type,
+                                            'config': {},
+                                            'title': chart_title,
+                                        }]
+                                    },
+                                    'data': data,
+                                    'original_query': user_query
+                             }
+                        },
+                        "confidence": 0.95
+                    }
+            # llm_analysis = chart_service._detect_chart_type_by_LLM(user_query)
+            # if llm_analysis and llm_analysis!="none":
+            #     chart_type = llm_analysis.get("chart_type")
+            #     confidence = llm_analysis.get("confidence", 0)
+            #     chart_title = llm_analysis.get("chart_title","")
+                
+            #     logger.info(f"📊 LLM: chart_type={chart_type}, confidence={confidence}")
+                
+            #     # If LLM says no visualization, return SQL result
+            #     if chart_type == "none" or confidence < 0.5:
+            #         logger.info("📊 No visualization needed or low confidence")
+            #         return sql_result
+                
+            #     # If high confidence, generate chart directly
+            #     if confidence >= 0.7:
+            #         logger.info(f"⚡ Generating {chart_type} directly (confidence: {confidence})")
+                    
+            #         chart_result = await chart_service.generate_chart(
+            #             data=data,
+            #             chart_type=chart_type,
+            #             title=chart_title if chart_title!= "" else f"{chart_type.title()} Analysis",
+            #             config=None,
+            #             original_query=user_query
+            #         )
+                    
+            #         if chart_result.get('success'):
+            #             try:
+            #                 await db.store_chart_in_history(
+            #                     chart_result, conversation_id, user_id, project_id
+            #                 )
+            #             except Exception as e:
+            #                 logger.warning(f"Failed to store chart: {e}")
+                        
+            #             return {
+            #                 "intent": "visualization_complete",
+            #                 "explanation": sql_result.get("explanation", ""),
+            #                 "final_answer": f"Here's your {chart_type} chart:",
+            #                 "sql_query": sql_result.get("sql_query"),
+            #                 "query_result": sql_result.get("query_result"),
+            #                 "chart": {
+            #                     "success": chart_result['success'],
+            #                     "chart_id": chart_result['chart_id'],
+            #                     "chart_json": chart_result['chart_json'],
+            #                     "chart_html": chart_result['chart_html'],
+            #                     "chart_png_base64": chart_result.get('chart_png_base64'),
+            #                     "chart_type": chart_result['chart_type'],
+            #                     "title": chart_result['title'],
+            #                     "data_points": chart_result['data_points'],
+            #                     "columns_used": chart_result['columns_used'],
+            #                     "timestamp": chart_result['timestamp'],
+            #                     "followup_suggestions": chart_result.get('followup_suggestions', [])
+            #                 },
+            #                 "followup_suggestions": chart_result.get('followup_suggestions', []),
+            #                 "metadata": {
+            #                     "chart": chart_result,
+            #                     "followup_suggestions": chart_result.get('followup_suggestions', [])
+                                # "is_direct_generation": True,
+                                #                 "_pending_viz_data": {
+                                #                         'suggestions': {
+                                #                             'success': True,
+                                #                             'suggestions': [{
+                                #                                 'chart_type': detected_chart_type,
+                                #                                 'config': {},
+                                #                                 'title': chart_title,
+                                #                             }]
+                                #                         },
+                                #                         'data': data,
+                                #                         'original_query': user_query
+                                #                 }
+            #                 },
+            #                 "confidence": 0.95
+            #             }
+
+            
+            # Low confidence or failed LLM - show suggestions
+            logger.info("🎨 Showing chart suggestions")
+            # Get AI chart suggestions with thumbnails
+            suggestions_result = await chart_service.suggest_chart_options(
+                query=user_query,
+                data=data,
+                intent="visualization"
+            )
+            
+            if not suggestions_result.get('success'):
+                return sql_result
+            
+            metadata_for_storage = {
+            '_pending_viz_data': {
+                'suggestions': suggestions_result,
+                'data': data,
+                'original_query': user_query
+            },
+            "is_direct_generation": False,
+            'suggested_next_questions': suggestions_result.get('suggested_questions', []),
+            'data_insights': suggestions_result.get('data_insights', '')
+        }
+            
+            return {
+                "intent": "visualization_pending",
+                "explanation": sql_result.get("explanation", ""),
+                "final_answer": f"I found {len(data)} data points. Please select your preferred visualization:",
+                "sql_query": sql_result.get("sql_query"),
+                "query_result": sql_result.get("query_result"),
+                "chart_suggestions": suggestions_result['suggestions'],
+                "data_insights": suggestions_result.get('data_insights', ''),
+                "suggested_next_questions": suggestions_result.get('suggested_questions', []),
+                "requires_chart_selection": True,
+                "confidence": 0.9,
+                "metadata": metadata_for_storage
+            }
+            
+        except Exception as e:
+            logger.error(f"Visualization error: {e}")
+            return {"intent": "error", "final_answer": f"Error: {str(e)}"}
+
+
+    async def handle_chart_selection(
+        self,
+        user_query: str,
+        conversation_history: List[Dict],
+        user_id: int,
+        project_id: str,
+        conversation_id: str
+    ) -> Dict[str, Any]:
+        """Handle user selecting a chart type from suggestions"""
         
-    #     return any(indicator in data_str for indicator in shortfall_indicators)
+        try:
+            # Get pending visualization from conversation
+            pending_viz = None
+            for msg in reversed(conversation_history):
+                if msg.get('role') == 'assistant' and msg.get('metadata'):
+                    metadata = msg['metadata']
+                    # Parse metadata if it's a string
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                        except:
+                            continue
+                    
+                    # Check if this message has pending visualization data
+                    if '_pending_viz_data' in metadata:
+                        pending_viz = metadata['_pending_viz_data']
+                        break
+            
+            if not pending_viz:
+                return {
+                    "intent": "error",
+                    "final_answer": "No pending visualization found. Please ask for a visualization first."
+                }
+            
+            # suggestions = json.loads(pending_viz['suggestions'])
+            # data = json.loads(pending_viz['data'])
+            # original_query = pending_viz.get('original_query', user_query)
+            suggestions = pending_viz.get('suggestions', {})
+            if isinstance(suggestions, str):
+                try:
+                    suggestions = json.loads(suggestions)
+                except:
+                    logger.error("Failed to parse suggestions")
+                    return {"intent": "error", "final_answer": "Error parsing chart suggestions."}
+            
+            data = pending_viz.get('data', [])
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except:
+                    logger.error("Failed to parse data")
+                    return {"intent": "error", "final_answer": "Error parsing visualization data."}
+            
+            original_query = pending_viz.get('original_query', user_query)
+            
+            # Determine which chart user selected
+            selection_prompt = f"""
+                                User was shown these chart options:
+                                {json.dumps([s['chart_type'] for s in suggestions['suggestions']], indent=2)}
+
+                                User's response: {user_query}
+
+                                Determine which chart type the user selected. Respond with JSON:
+                                {{
+                                "selected_chart_type": "chart_type_name",
+                                "confidence": 0.95
+                                }}
+                            """
+            
+            response = await self.client.chat.completions.create(
+                model=self.NLP_LLM_model,
+                messages=[{"role": "user", "content": selection_prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+            
+            selection = json.loads(response.choices[0].message.content)
+            selected_type = selection['selected_chart_type']
+            
+            # Find the config for selected chart
+            config = None
+            title = "Data Visualization"
+            for sug in suggestions['suggestions']:
+                if sug['chart_type'] == selected_type:
+                    config = sug.get('config')
+                    title = sug.get('title', title)
+                    break
+            
+            # Generate the chart
+            logger.info(f"Generating {selected_type} chart with {len(data)} data points")
+            chart_result = await chart_service.generate_chart(
+                data=data,
+                chart_type=selected_type,
+                title=title,
+                config=config,
+                original_query=original_query
+            )
+            if not chart_result.get('success'):
+                logger.error(f"Chart generation failed: {chart_result.get('error')}")
+                return {
+                    "intent": "error",
+                    "final_answer": f"Failed to generate chart: {chart_result.get('error', 'Unknown error')}"
+                }
+            if chart_result.get('success'):
+                # Store chart in history
+                await db.store_chart_in_history(
+                    chart_result,
+                    conversation_id,
+                    user_id,
+                    project_id
+                )
+            
+                # # Clear pending visualization
+                # await db.execute(
+                #     """
+                #     UPDATE chat_messages 
+                #     SET metadata = metadata - 'pending_visualization' - 'visualization_data' - 'original_query'
+                #     WHERE conversation_id = $1
+                #     """,
+                #     conversation_id
+                # )
+            
+            return {
+                "intent": "visualization_complete",
+                "final_answer": f"Here's your {selected_type} chart:",
+                "chart": {
+                "success": chart_result['success'],
+                "chart_id": chart_result['chart_id'],
+                "chart_json": chart_result['chart_json'],
+                "chart_html": chart_result['chart_html'],
+                "chart_png_base64": chart_result.get('chart_png_base64'),
+                "chart_type": chart_result['chart_type'],
+                "title": chart_result['title'],
+                "data_points": chart_result['data_points'],
+                "columns_used": chart_result['columns_used'],
+                "timestamp": chart_result['timestamp'],
+                "followup_suggestions": chart_result.get('followup_suggestions', [])
+                    },
+                "followup_suggestions": chart_result.get('followup_suggestions', []),
+                "metadata": {
+                    "chart": {
+                        "success": chart_result['success'],
+                        "chart_id": chart_result['chart_id'],
+                        "chart_json": chart_result['chart_json'],
+                        "chart_html": chart_result['chart_html'],
+                        "chart_png_base64": chart_result.get('chart_png_base64'),
+                        "chart_type": chart_result['chart_type'],
+                        "title": chart_result['title'],
+                        "data_points": chart_result['data_points'],
+                        "columns_used": chart_result['columns_used'],
+                        "timestamp": chart_result['timestamp']
+                    },
+                    "followup_suggestions": chart_result.get('followup_suggestions', [])
+                },
+                "confidence": 0.95
+            }
+            
+        except Exception as e:
+            logger.error(f"Chart selection error: {e}")
+            return {"intent": "error", "final_answer": f"Error: {str(e)}"}
 
     # Main Query Processing
     async def process_user_query(
@@ -1415,6 +1844,19 @@ class SQLRAGService:
                     "confidence": 0.9,
                     "tables_used": []
                 }
+
+            elif intent == "chart_selection":
+                result = await self.handle_chart_selection(user_query, conversation_history, user_id, project_id, conversation_id)
+            
+            elif intent == "visualization":
+                result = await self.handle_visualization_request(
+                    user_query, 
+                    relevant_data, 
+                    conversation_history,
+                    user_id,
+                    project_id,
+                    conversation_id
+                )
                 
             else:  # sql_query intent
                 # SQL generation flow

@@ -14,6 +14,43 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["sql-chat"])
 security = HTTPBearer()
+class FollowUpSuggestion(BaseModel):
+    """Follow-up suggestion for chart refinement"""
+    type: str  # granularity_change, comparison, etc.
+    question: str
+    reasoning: str
+    action: Dict[str, Any]
+
+class ChartData(BaseModel):
+    """Chart data response model"""
+    success: bool
+    chart_id: str
+    chart_json: str
+    chart_html: str
+    chart_png_base64: Optional[str] = None
+    chart_type: str
+    title: str
+    data_points: int
+    columns_used: Dict[str, Any]
+    timestamp: str
+    followup_suggestions: Optional[List[FollowUpSuggestion]] = None
+
+class ChartMetadata(BaseModel):
+    """Chart type metadata"""
+    name: str
+    description: str
+    icon: str
+    best_for: str
+
+class ChartSuggestion(BaseModel):
+    """Individual chart suggestion"""
+    chart_type: str
+    confidence: int
+    reasoning: str
+    config: Dict[str, Any]
+    title: str
+    metadata: ChartMetadata
+    thumbnail: Optional[str] = None
 
 class SQLChatRequest(BaseModel):
     message: str
@@ -40,8 +77,12 @@ class SQLChatResponse(BaseModel):
 
     po_workflow: Optional[Dict[str, Any]] = None  # PO workflow details
     po_suggestion: Optional[Dict[str, Any]] = None  # PO suggestions from SQL results
-    chart: Optional[Dict[str, Any]] = None
-    chart_suggestions: Optional[List[str]] = None
+    # Visualization fields
+    chart: Optional[ChartData] = None
+    chart_suggestions: Optional[List[ChartSuggestion]] = None
+    data_insights: Optional[str] = None
+    # suggested_questions: Optional[List[str]] = None
+    requires_chart_selection: Optional[bool] = None
     
 
 @router.post("/query", response_model=SQLChatResponse)
@@ -118,8 +159,12 @@ async def chat_with_database(
             # context_sources=context_sources,
             po_workflow=response.get("po_workflow"),     
             po_suggestion=response.get("po_suggestion"),
-            chart=response.get("chart"),  # ← ADD THIS
-            chart_suggestions=response.get("chart_suggestions")  # ← ADD THIS
+            # Visualization fields
+            chart=response.get("chart"),
+            chart_suggestions=response.get("chart_suggestions"),
+            data_insights=response.get("data_insights"),
+            # suggested_questions=response.get("suggested_questions"),
+            requires_chart_selection=response.get("requires_chart_selection")
         )
         
     except HTTPException:

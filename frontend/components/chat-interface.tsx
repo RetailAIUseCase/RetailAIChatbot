@@ -52,8 +52,10 @@ import {
   MessageSquare,
   ShoppingCart, // For PO workflow icon
   Package,
+  ChevronRight,
+  Image
 } from "lucide-react";
-import { toast } from "@/components/ui/use-toast";
+import {toast, useToast } from "@/components/ui/use-toast";
 
 // **ENHANCED: Updated interfaces for new API response**
 interface SQLChatResponse {
@@ -95,29 +97,89 @@ interface SQLChatResponse {
   //   suggestion_text: string;
   // };
   po_workflow_started?: boolean;
+  chart?: ChartData
+  chart_suggestions?: ChartSuggestion[]
+  data_insights?: string
+  // suggested_questions?: string[]
+  requires_chart_selection?: boolean
+}
+interface FollowUpSuggestion {
+  type: 'granularity_change' | 'comparison' | 'metric_addition' | 'time_period' | 'drill_down' | 'visualization_change'
+  question: string
+  reasoning: string
+  action: {
+    query_modification: string
+    chart_type: string
+    requires_new_data: boolean
+  }
+}
+interface ChartData {
+  success: boolean
+  chart_id: string
+  chart_json: string
+  chart_html: string
+  chart_png_base64?: string
+  chart_type: string
+  title: string
+  data_points: number
+  columns_used: {
+    x: string
+    y: string[]
+  }
+  timestamp: string
+  followup_suggestions?: FollowUpSuggestion[]
 }
 
+interface ChartSuggestion {
+  chart_type: string
+  confidence: number
+  reasoning: string
+  config: {
+    x: string
+    y: string[]
+    group_by?: string
+  }
+  title: string
+  metadata: {
+    name: string
+    description: string
+    icon: string
+    best_for: string
+  }
+  thumbnail?: string
+}
 interface Message {
-  id: string;
-  content: string;
-  sender: "user" | "ai";
-  timestamp: Date;
-  relatedDocuments?: string[];
-  sqlQuery?: string;
-  queryResult?: SQLChatResponse["query_result"];
-  intent?: string;
-  confidence?: number;
-  tables_used?: string[];
-  suggestion?: string[]; 
-  business_rules_applied?: string[]; // New field
-  reference_context?: string[]; // New field
-  sample_data?: Array<Record<string, any>>;
-  total_rows?: number;
-  retrieval_stats?: SQLChatResponse["retrieval_stats"]; // New field
-  context_sources?: string[]; // New field
-  po_workflow?: SQLChatResponse["po_workflow"];
-  // po_suggestion?: SQLChatResponse["po_suggestion"];
-  po_workflow_started?: boolean;
+  id: string
+  sender: "user" | "ai"
+  content: string
+  timestamp: Date
+  conversation_id?: string
+  intent?: string
+  sql_query?: string
+  explanation?: string
+  tables_used?: string[]
+  business_rules_applied?: string[]
+  reference_context?: string[]
+  query_result?: SQLChatResponse["query_result"]
+  confidence?: number
+  suggestion?: string[]
+  sample_data?: any[]
+  total_rows?: number
+  retrieval_stats?: any
+  context_sources?: string[]
+  relatedDocuments?: string[]
+  po_workflow?: any
+  po_suggestion?: any
+  po_workflow_started?: boolean
+  
+ // Visualization fields
+  chart?: ChartData
+  chart_suggestions?: ChartSuggestion[]
+  data_insights?: string
+  // suggested_questions?: string[]
+  requires_chart_selection?: boolean
+  direct_chart_generation?: boolean; 
+  followup_suggestions?: FollowUpSuggestion[]
 }
 
 interface Project {
@@ -142,83 +204,466 @@ interface Conversation {
   message_count: number;
 }
 
-// Add props for processing state
 interface ChatInterfaceProps {
-  selectedProject: Project | null;
-  isEmbeddingProcessing?: boolean;
-  conversations: Conversation[];
-  currentConversationId: string | null;
-  onConversationChange: (conversationId: string | null) => void;
-  onNewConversation: () => void;
+  selectedProject: Project | null
+  isEmbeddingProcessing?: boolean
+  conversations: Conversation[]
+  currentConversationId: string | null
+  onConversationChange: (conversationId: string | null) => void
+  onNewConversation: () => void
 }
-// **NEW: Context Sources Display Component**
-// const ContextSourcesDisplay = ({
-//   context_sources,
-//   retrieval_stats
-// }: {
-//   context_sources?: string[]
-//   retrieval_stats?: SQLChatResponse['retrieval_stats']
-// }) => {
-//   if (!context_sources || context_sources.length === 0) return null
 
-//   const getSourceIcon = (source: string) => {
-//     switch (source) {
-//       case 'database_schema':
-//         return <Database className="h-3 w-3" />
-//       case 'business_rules':
-//         return <Building2 className="h-3 w-3" />
-//       case 'documentation':
-//         return <BookOpen className="h-3 w-3" />
-//       default:
-//         return <Info className="h-3 w-3" />
-//     }
-//   }
+// ==================== CHART SELECTION CARD ====================
 
-//   const getSourceLabel = (source: string) => {
-//     switch (source) {
-//       case 'database_schema':
-//         return 'Schema'
-//       case 'business_rules':
-//         return 'Rules'
-//       case 'documentation':
-//         return 'Docs'
-//       default:
-//         return source
-//     }
-//   }
+interface ChartSelectionCardProps {
+  suggestions: ChartSuggestion[]
+  dataInsights?: string
+  onSelect: (chartType: string) => void
+}
+const API_BASE_URL =
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "https://retail-ai-chatbot.onrender.com";
 
-//   const getSourceCount = (source: string) => {
-//     if (!retrieval_stats) return null
-//     switch (source) {
-//       case 'database_schema':
-//         return retrieval_stats.metadata_results
-//       case 'business_rules':
-//         return retrieval_stats.business_logic_results
-//       case 'documentation':
-//         return retrieval_stats.reference_results
-//       default:
-//         return null
-//     }
-//   }
+const ChartSelectionCard: React.FC<ChartSelectionCardProps> = ({
+  suggestions,
+  dataInsights,
+  onSelect
+}) => {
+  const [selected, setSelected] = useState<string | null>(null)
 
-//   return (
-//     <div className="flex items-center gap-1 flex-wrap">
-//       <Activity className="h-3 w-3 text-primary" />
-//       <span className="text-xs text-muted-foreground">Sources:</span>
-//       {context_sources.map((source, index) => {
-//         const count = getSourceCount(source)
-//         return (
-//           <Badge key={index} variant="outline" className="text-xs py-0 px-1 h-4 flex items-center gap-1">
-//             {getSourceIcon(source)}
-//             <span>{getSourceLabel(source)}</span>
-//             {count !== null && <span className="text-muted-foreground">({count})</span>}
-//           </Badge>
-//         )
-//       })}
-//     </div>
-//   )
-// }
+  if (!suggestions || suggestions.length === 0) return null
 
+  return (
+    <div className="my-4 p-4 border-2 border-green-200 rounded-lg bg-gradient-to-br from-green-50 to-white">
+      <div className="flex items-center gap-2 mb-3">
+        <Activity className="h-5 w-5 text-primary" />
+        <h3 className="font-semibold text-lg">Choose Your Visualization</h3>
+      </div>
+
+      {dataInsights && (
+        <Alert className="mb-4 bg-blue-50 border-blue-200">
+          <Info className="h-4 w-4 text-blue-600" />
+          <AlertDescription className="text-sm text-blue-800">
+            {dataInsights}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {suggestions.map((suggestion, idx) => (
+          <div
+            key={suggestion.chart_type}
+            className={`relative border-2 rounded-lg p-4 cursor-pointer transition-all hover:shadow-lg ${
+              selected === suggestion.chart_type
+                ? 'border-primary bg-green-100 shadow-lg scale-105'
+                : 'border-gray-300 hover:border-primary hover:shadow-md'
+            }`}
+            onClick={() => {
+              setSelected(suggestion.chart_type)
+              onSelect(suggestion.chart_type)
+            }}
+          >
+            {idx === 0 && (
+              <Badge className="absolute top-2 right-2 bg-primary text-white text-xs">
+                Recommended
+              </Badge>
+            )}
+            
+            <Badge variant="outline" className="absolute top-2 left-2 text-xs">
+              {suggestion.confidence}% match
+            </Badge>
+
+            <div className="mt-8 mb-3 bg-white rounded-lg overflow-hidden border">
+              {suggestion.thumbnail ? (
+                <img 
+                  src={suggestion.thumbnail}
+                  alt={suggestion.chart_type}
+                  className="w-full h-40 object-contain p-2"
+                />
+              ) : (
+                <div className="w-full h-40 flex items-center justify-center bg-gray-50">
+                  <span className="text-5xl">{suggestion.metadata?.icon || '📊'}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-sm">
+                  {suggestion.metadata?.name || suggestion.chart_type.toUpperCase()}
+                </h4>
+                {selected === suggestion.chart_type && (
+                  <CheckCircle className="h-5 w-5 text-primary" />
+                )}
+              </div>
+
+              <p className="text-xs text-gray-600 line-clamp-2">
+                {suggestion.metadata?.description || suggestion.reasoning}
+              </p>
+
+              <div className="pt-2 border-t text-xs text-gray-500">
+                <strong>Best for:</strong> {suggestion.metadata?.best_for || 'General analysis'}
+              </div>
+            </div>
+
+            <Button
+              variant={selected === suggestion.chart_type ? "default" : "outline"}
+              size="sm"
+              className="w-full mt-3"
+              onClick={(e) => {
+                e.stopPropagation()
+                setSelected(suggestion.chart_type)
+                onSelect(suggestion.chart_type)
+              }}
+            >
+              {selected === suggestion.chart_type ? (
+                <>
+                  <CheckCircle className="h-3 w-3 mr-1" />
+                  Selected
+                </>
+              ) : (
+                'Select This Chart'
+              )}
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ==================== SMART FOLLOW-UP BUTTONS ====================
+
+interface SmartFollowUpButtonsProps {
+  suggestions: FollowUpSuggestion[]
+  onSuggestionClick: (suggestion: FollowUpSuggestion) => void
+}
+
+const SmartFollowUpButtons: React.FC<SmartFollowUpButtonsProps> = ({ 
+  suggestions, 
+  onSuggestionClick 
+}) => {
+  const getIconForType = (type: string) => {
+    switch (type) {
+      case 'granularity_change':
+        return <Clock className="h-1 w-1" />
+      case 'comparison':
+        return <Activity className="h-1 w-1" />
+      case 'metric_addition':
+        return <Plus className="h-1 w-1" />
+      case 'time_period':
+        return <Clock className="h-1 w-1" />
+      case 'drill_down':
+        return <ChevronDown className="h-1 w-1" />
+      case 'visualization_change':
+        return <Activity className="h-1 w-1" />
+      default:
+        return <Info className="h-1 w-1" />
+    }
+  }
+
+  const getBadgeColor = (type: string) => {
+    switch (type) {
+      case 'granularity_change':
+        return 'bg-blue-100 text-blue-700 border-blue-300'
+      case 'comparison':
+        return 'bg-green-100 text-green-700 border-green-300'
+      case 'drill_down':
+        return 'bg-purple-100 text-purple-700 border-purple-300'
+      case 'time_period':
+        return 'bg-orange-100 text-orange-700 border-orange-300'
+      default:
+        return 'bg-gray-100 text-gray-700 border-gray-300'
+    }
+  }
+
+  if (!suggestions || suggestions.length === 0) return null
+
+  return (
+    <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-lg">💡</span>
+        <p className="text-sm font-semibold text-gray-700">You might also want to:</p>
+      </div>
+
+      <div className="space-y-2">
+        {suggestions.map((suggestion, idx) => (
+          <div
+            key={idx}
+            className="group flex items-start gap-3 p-3 bg-white rounded-lg border border-gray-200 hover:border-primary hover:shadow-md transition-all cursor-pointer"
+            onClick={() => onSuggestionClick(suggestion)}
+          >
+            <div className="flex-shrink-0 mt-1">
+              <Badge variant="outline" className={`text-xs ${getBadgeColor(suggestion.type)}`}>
+                {getIconForType(suggestion.type)}
+                <span className="ml-1 capitalize">
+                  {suggestion.type.replace('_', ' ')}
+                </span>
+              </Badge>
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 group-hover:text-primary transition-colors">
+                {suggestion.question}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                {suggestion.reasoning}
+              </p>
+            </div>
+
+            <div className="flex-shrink-0">
+              <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-primary transition-colors" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ==================== CHART DISPLAY ====================
+
+interface ChartDisplayProps {
+  chart: ChartData
+  conversationId?: string
+  followupSuggestions?: FollowUpSuggestion[]
+  onSuggestionClick?: (suggestion: FollowUpSuggestion) => void
+}
+
+const ChartDisplay: React.FC<ChartDisplayProps> = ({ 
+  chart, 
+  conversationId, 
+  followupSuggestions,
+  onSuggestionClick 
+}) => {
+  const { toast } = useToast()
+
+  if (!chart) {
+    console.warn("❌ ChartDisplay: No chart prop received");
+    return <div>⚠️ No chart data</div>;
+  }
+
+  if (!chart.success) {
+    console.warn("❌ ChartDisplay: Chart not successful");
+    return <div>⚠️ Chart marked unsuccessful</div>;
+  }
+
+  if (!chart.chart_html && !chart.chart_png_base64) {
+    console.error("❌ ChartDisplay: No HTML or image available", chart);
+    return <div>⚠️ No chart visualization available</div>;
+  }
+  const downloadPDF = async () => {
+    try {
+      if (!chart?.chart_id) {
+        throw new Error("Chart ID is missing")
+      }
+      const requestPayload = {
+        chart_ids: [chart.chart_id],        // ✅ Array of strings
+        report_title: chart.title || "Chart Report",
+        include_insights: true,
+        conversation_id: conversationId
+      }
+      
+      const cleanPayload = JSON.parse(JSON.stringify(requestPayload))
+      console.log("📤 Clean Request Payload:")
+      console.log(JSON.stringify(cleanPayload, null, 2))
+
+      const token = localStorage.getItem("access_token");
+      if (!token) {
+        throw new Error("No authentication token found. Please log in again.");
+      }
+      const response = await fetch(`${API_BASE_URL}/visualizations/generate-pdf`, {
+        method: 'POST',
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+          
+        },
+        body: JSON.stringify(cleanPayload)
+      })
+
+      if (!response.ok) {
+      const error = await response.json()
+      console.error("❌ PDF download error:", error)
+      throw new Error(error.detail || 'Download failed')
+    }
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${chart.title.replace(/[^a-z0-9]/gi, '_')}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      toast({
+        title: "Downloaded Successfully!",
+        description: "Chart has been saved as PDF",
+      })
+    } catch (error) {
+      console.error('PDF download error:', error)
+      toast({
+        title: "Download Failed",
+        description: "Unable to download chart as PDF",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const downloadHTML = () => {
+    try {
+      const blob = new Blob([chart.chart_html], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${chart.title.replace(/[^a-z0-9]/gi, '_')}.html`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      toast({
+        title: "Downloaded Successfully!",
+        description: "Interactive chart saved as HTML",
+      })
+    } catch (error) {
+      console.error('HTML download error:', error)
+      toast({
+        title: "Download Failed",
+        description: "Unable to download HTML",
+        variant: "destructive"
+      })
+    }
+  }
+  const downloadPNG = () => {
+    try {
+      if (!chart?.chart_png_base64) {
+        console.error("No chart PNG data available");
+        toast({
+          title: "Download Failed",
+          description: "No PNG data available for this chart",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Convert base64 to blob
+      const byteCharacters = atob(chart.chart_png_base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: "image/png" });
+
+      // Create download link
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      
+      // Generate filename: chart-title-YYYY-MM-DD.png
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `${chart.title.toLowerCase().replace(/\s+/g, "-")}-${dateStr}.png`;
+      
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Downloaded Successfully!",
+        description: "Chart has been saved as PNG",
+      });
+    } catch (error) {
+      console.error("PNG download error:", error);
+      toast({
+        title: "Download Failed",
+        description: "Unable to download chart as PNG",
+        variant: "destructive"
+      });
+    }
+  };
+
+
+  if (!chart || !chart.success) return null
+  return (
+    <div className="w-full">
+    {/* Header */}
+    <div className="bg-muted/50 border border-b-0 border-border/30 rounded-t-md px-4 py-2 flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <Activity className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+        <span className="font-medium text-xs text-foreground truncate">{chart.title}</span>
+        <Badge variant="outline" className="text-[10px] h-4 flex-shrink-0">
+          {chart.data_points} pts
+        </Badge>
+        <Badge variant="secondary" className="text-[10px] h-4 capitalize flex-shrink-0">
+          {chart.chart_type}
+        </Badge>
+      </div>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs flex-shrink-0 ml-2">
+            <Download className="h-3 w-3 mr-1" />
+            Download
+            <ChevronDown className="h-3 w-3 ml-1" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={downloadPDF}>
+            <FileText className="h-3 w-3 mr-2" />
+            PDF
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={downloadHTML}>
+            <Code className="h-3 w-3 mr-2" />
+            HTML
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={downloadPNG}>
+            <Image className="h-3 w-3 mr-2" />
+            PNG
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+
+    {/* Chart Container */}
+    <div className="w-full border border-t-0 border-border/30 rounded-b-md bg-white dark:bg-background overflow-hidden flex items-center justify-center" style={{ height: '350px' }}>
+      {chart.chart_html ? (
+        <iframe
+          srcDoc={chart.chart_html}
+          title={chart.title}
+          className="w-full h-full border-0"
+          style={{ display: 'block', background: 'white' }}
+        />
+      ) : chart.chart_png_base64 ? (
+        <img
+          src={`data:image/png;base64,${chart.chart_png_base64}`}
+          alt="Chart"
+          className="w-full h-full object-contain"
+        />
+      ) : (
+        <div className="flex items-center justify-center h-full text-sm text-muted-foreground italic">
+          No chart visualization available.
+        </div>
+      )}
+    </div>
+
+    {/* Followup Suggestions */}
+    {followupSuggestions && followupSuggestions.length > 0 && onSuggestionClick && (
+      <div className="px-3 py-2 border-t border-border/30 bg-muted/30">
+        <SmartFollowUpButtons
+          suggestions={followupSuggestions}
+          onSuggestionClick={onSuggestionClick}
+        />
+      </div>
+    )}
+  </div>
+)
+
+}
 // **ENHANCED: Business Rules & References Display Component**
 // const BusinessContextDisplay = ({
 //   business_rules_applied,
@@ -605,7 +1050,7 @@ const SQLResultDisplay = ({
   );
 };
 
-// Auto-scroll Hook (unchanged)
+// Auto-scroll Hook
 const useChatScroll = (dep: any) => {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -618,7 +1063,7 @@ const useChatScroll = (dep: any) => {
   return ref;
 };
 
-// Utility functions (unchanged)
+// Utility functions
 const shouldShowIntent = (intent?: string): boolean => {
   if (!intent) return false;
 
@@ -635,12 +1080,20 @@ const shouldShowConfidence = (confidence?: number): boolean => {
 // **ENHANCED: Message Bubble Component with new context display**
 const MessageBubble = ({
   message,
+  conversation_id,
   onCopy,
   onFeedback,
+  onSuggestionClick,
+  onChartSelect,
+  onFollowupClick
 }: {
   message: Message;
+  conversation_id: string | null
   onCopy: (content: string) => void;
   onFeedback: (messageId: string, type: "up" | "down") => void;
+  onSuggestionClick: (suggestion: string) => void;
+  onChartSelect: (selection: string) => void;
+  onFollowupClick: (suggestion: FollowUpSuggestion) => void;
 }) => {
   const formatTimestamp = (timestamp: Date) => {
     return timestamp.toLocaleTimeString([], {
@@ -649,7 +1102,10 @@ const MessageBubble = ({
     });
   };
 
-  const getMessageWidth = (content: string, sender: string) => {
+  const getMessageWidth = (content: string, sender: string, hasChart?:boolean) => {
+    if (hasChart) {
+      return "max-w-[85%]";
+    }
     const contentLength = content.length;
 
     if (sender === "user") {
@@ -663,7 +1119,7 @@ const MessageBubble = ({
     }
   };
 
-  const messageWidthClass = getMessageWidth(message.content, message.sender);
+  const messageWidthClass = getMessageWidth(message.content, message.sender, !!message.chart);
   // **NEW: PO Workflow Status Component**
   const POWorkflowDisplay = ({
     po_workflow,
@@ -755,7 +1211,7 @@ const MessageBubble = ({
               <p className="text-sm leading-5 whitespace-pre-wrap break-words">
                 {message.content}
               </p>
-              {message.sender === "ai" && message.suggestion && message.suggestion.length > 0 && (
+              {/* {message.sender === "ai" && message.suggestion && message.suggestion.length > 0 && (
                 <div className="mt-4 space-y-2">
                   <p className="text-sm text-muted-foreground font-medium">
                     Would you like me to help with any of these next?
@@ -772,7 +1228,7 @@ const MessageBubble = ({
                     ))}
                   </div>
                 </div>
-              )}
+              )} */}
 
 
               {/* Enhanced Intent and Confidence Display */}
@@ -807,9 +1263,9 @@ const MessageBubble = ({
               {message.sender === "ai" && (
                 <div className="overflow-hidden max-w-full">
                   <SQLResultDisplay
-                    sqlQuery={message.sqlQuery}
-                    queryResult={message.queryResult}
-                    data={message.queryResult?.data}
+                    sqlQuery={message.sql_query}
+                    queryResult={message.query_result}
+                    data={message.query_result?.data}
                     sample_data={message.sample_data}
                     total_rows={message.total_rows}
                     tables_used={message.tables_used}
@@ -824,6 +1280,43 @@ const MessageBubble = ({
                   />
                 </div>
               )}
+              {message.sender === "ai" && message.chart && (
+                    <ChartDisplay
+                      chart={message.chart}
+                      conversationId={conversation_id || ""}
+                      followupSuggestions={message.followup_suggestions}
+                      onSuggestionClick={onFollowupClick}
+                    />
+                )}
+              {message.sender === "ai" && message.requires_chart_selection && !message.direct_chart_generation && message.chart_suggestions && message.chart_suggestions.length > 0 &&(
+                <ChartSelectionCard
+                  suggestions={message.chart_suggestions}
+                  dataInsights={message.data_insights}
+                  onSelect={onChartSelect}
+                />
+              )}
+              {message.sender === "ai" && message.suggestion && message.suggestion.length > 0 && (
+                  <div className="mt-3 p-3 bg-muted/30 rounded-lg border">
+                    <p className="text-sm text-muted-foreground font-medium mb-2">
+                      Would you like me to help with any of these next?
+                    </p>
+                    <div className="space-y-2">
+                      {message.suggestion.map((sug, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => onSuggestionClick(sug)}
+                          className="w-full text-left text-xs p-3 rounded-md border border-border hover:border-primary hover:bg-accent/60 transition-colors bg-background"
+                        >
+                          <div className="flex items-start gap-2">
+                            <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-0.5" />
+                            <span className="flex-1 leading-relaxed">{sug}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+              )}
+
             </div>
           </CardContent>
         </Card>
@@ -908,77 +1401,6 @@ const MessageBubble = ({
 //     </div>
 //   )
 // }
-// Add this component above your ChatInterface component
-// const ConversationSelector = ({
-//   conversations,
-//   currentConversationId,
-//   onConversationChange,
-//   onNewConversation
-// }: {
-//   conversations: Conversation[]
-//   currentConversationId: string | null
-//   onConversationChange: (conversationId: string | null) => void
-//   onNewConversation: () => void
-// }) => {
-//   // Don't show if no conversations exist and no current conversation
-//   if (conversations.length === 0 && !currentConversationId) {
-//     return null
-//   }
-
-//   return (
-//     <div className="px-3 py-2 bg-background/95 backdrop-blur border-b">
-//       <div className="max-w-4xl mx-auto">
-//         <div className="flex items-center gap-2">
-//           <DropdownMenu>
-//             <DropdownMenuTrigger asChild>
-//               <Button variant="outline" size="sm" className="flex-1 justify-start">
-//                 <MessageSquare className="h-4 w-4 mr-2" />
-//                 {currentConversationId ?
-//                   conversations.find(c => c.id === currentConversationId)?.title?.slice(0, 40) + "..." || "Current Chat"
-//                   : "New Chat"
-//                 }
-//                 <ChevronDown className="h-4 w-4 ml-auto" />
-//               </Button>
-//             </DropdownMenuTrigger>
-//             <DropdownMenuContent className="w-80" align="start">
-//               <DropdownMenuItem onClick={onNewConversation}>
-//                 <Plus className="h-4 w-4 mr-2" />
-//                 New Chat
-//               </DropdownMenuItem>
-//               {conversations.length > 0 && (
-//                 <>
-//                   <DropdownMenuSeparator />
-//                   <div className="max-h-60 overflow-y-auto">
-//                     {conversations.map(conv => (
-//                       <DropdownMenuItem
-//                         key={conv.id}
-//                         onClick={() => onConversationChange(conv.id)}
-//                         className={currentConversationId === conv.id ? "bg-accent" : ""}
-//                       >
-//                         <div className="flex flex-col items-start w-full">
-//                           <span className="font-medium truncate w-full">
-//                             {conv.title || "Untitled Chat"}
-//                           </span>
-//                           <span className="text-xs text-muted-foreground">
-//                             {new Date(conv.updated_at).toLocaleDateString()} • {conv.message_count} messages
-//                           </span>
-//                         </div>
-//                       </DropdownMenuItem>
-//                     ))}
-//                   </div>
-//                 </>
-//               )}
-//             </DropdownMenuContent>
-//           </DropdownMenu>
-
-//           <Button variant="outline" size="sm" onClick={onNewConversation}>
-//             <Plus className="h-4 w-4" />
-//           </Button>
-//         </div>
-//       </div>
-//     </div>
-//   )
-// }
 
 // **ENHANCED: Main ChatInterface Component with updated API call**
 export function ChatInterface({
@@ -997,10 +1419,6 @@ export function ChatInterface({
 
   // Auto-scroll to bottom when new messages arrive
   const messagesEndRef = useChatScroll(messages);
-
-  const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "https://retail-ai-chatbot.onrender.com";
 
   // Initialize welcome message
   useEffect(() => {
@@ -1062,7 +1480,8 @@ export function ChatInterface({
 
         const formattedMessages = data.messages.map((msg: any) => {
           let queryResult = msg.query_result;
-          let suggestion = msg.metadata;
+          let metadata = msg.metadata || {};
+          
           if (typeof queryResult === "string") {
             try {
               queryResult = JSON.parse(queryResult);
@@ -1071,14 +1490,44 @@ export function ChatInterface({
               queryResult = null;
             }
           }
-          if (typeof suggestion === "string") {
+          if (metadata && typeof metadata === "string") {
             try {
-              suggestion = JSON.parse(suggestion);
+              metadata = JSON.parse(metadata);
             } catch (e) {
-              console.warn("Failed to parse suggestion:", e);
-              suggestion = null;
+              console.warn("Failed to parse metadata:", e);
+              metadata = null;
             }
           }
+          if (!metadata || typeof metadata !== "object") {
+              metadata = {}
+            }
+         
+          // const chartData = metadata?.chart
+          // const chartSuggestions = metadata?.chart_suggestions
+          const visualizationData = metadata?._pending_viz_data || {}
+          // const suggestedQuestions = metadata?.suggested_next_questions || metadata?.suggested_questions || []
+          const followupSuggestions = metadata?.followup_suggestions || []
+          const pendingVizData = metadata._pending_viz_data || {};
+          const chartData = metadata.chart;
+          
+          // **KEY FIX: Get suggestions from _pending_viz_data.suggestions**
+          // let chartSuggestions = metadata.chart_suggestions || [];
+          // if (!chartSuggestions.length && pendingVizData.suggestions) {
+          //   chartSuggestions = pendingVizData.suggestions;
+          // }
+          const suggestionsContainer = pendingVizData.suggestions || {};
+          const chartSuggestions = suggestionsContainer.suggestions || [];
+          const dataInsights = 
+            pendingVizData.suggestions?.metadata?.data_insights ||
+            metadata.data_insights || 
+            "";
+          const isDirectChartGeneration = metadata?.is_direct_generation || false
+          const suggestedQuestions = 
+            metadata.suggested_next_questions || 
+            metadata.suggested_questions || 
+            pendingVizData.suggested_questions ||
+            [];
+
           return {
             id: msg.id,
             content: msg.content,
@@ -1088,7 +1537,7 @@ export function ChatInterface({
             queryResult: queryResult,
             intent: msg.intent,
             tables_used: msg.tables_used,
-            suggestion: suggestion?.suggested_next_questions,
+            suggestion: suggestedQuestions,
             business_rules_applied: msg.business_rules_applied,
             reference_context: msg.reference_context,
             sample_data:
@@ -1099,6 +1548,12 @@ export function ChatInterface({
               msg.rows_count,
             retrieval_stats: msg.retrieval_stats,
             context_sources: msg.context_sources,
+            chart: chartData ? chartData : undefined,
+            chart_suggestions: chartSuggestions || [],
+            data_insights: dataInsights || visualizationData?.metadata?.data_insights || metadata?.data_insights || "",
+            requires_chart_selection: !!chartSuggestions?.length || !!pendingVizData.suggestions?.length,
+            direct_chart_generation: isDirectChartGeneration,
+            followup_suggestions:followupSuggestions
           };
         });
         setMessages(formattedMessages);
@@ -1216,8 +1671,8 @@ export function ChatInterface({
         sender: "ai",
         timestamp: new Date(),
         relatedDocuments: data.tables_used || [],
-        sqlQuery: data.sql_query,
-        queryResult: data.query_result,
+        sql_query: data.sql_query,
+        query_result: data.query_result,
         intent: data.intent,
         confidence: data.confidence,
         tables_used: data.tables_used,
@@ -1231,6 +1686,11 @@ export function ChatInterface({
         po_workflow: data.po_workflow,
         // po_suggestion: data.po_suggestion,
         po_workflow_started: data.po_workflow_started,
+        chart: data.chart,
+        chart_suggestions: data.chart_suggestions || [],
+        data_insights: data.data_insights || "",
+        requires_chart_selection: data.requires_chart_selection || false,
+        followup_suggestions: data.chart?.followup_suggestions || []
       };
 
       setMessages((prev) => [...prev, aiResponse]);
@@ -1265,6 +1725,27 @@ export function ChatInterface({
       handleSendMessage(e as any);
     }
   };
+
+  const handleSuggestionClick = (suggestion: string) => {
+      setMessage(suggestion)
+      setTimeout(() => {
+        handleSendMessage({ preventDefault: () => {} } as any)
+      }, 100)
+    }
+
+    const handleChartSelect = (chartType: string) => {
+      setMessage(`Use the ${chartType} chart`)
+      setTimeout(() => {
+        handleSendMessage({ preventDefault: () => {} } as any)
+      }, 100)
+    }
+
+    const handleFollowupClick = (suggestion: FollowUpSuggestion) => {
+      setMessage(suggestion.action.query_modification)
+      setTimeout(() => {
+        handleSendMessage({ preventDefault: () => {} } as any)
+      }, 100)
+    }
 
   if (!selectedProject) {
     return (
@@ -1329,8 +1810,12 @@ export function ChatInterface({
             <MessageBubble
               key={msg.id}
               message={msg}
+              conversation_id={currentConversationId}
               onCopy={handleCopy}
               onFeedback={handleFeedback}
+              onSuggestionClick={handleSuggestionClick}
+              onChartSelect={handleChartSelect}
+              onFollowupClick={handleFollowupClick}
             />
           ))}
 
