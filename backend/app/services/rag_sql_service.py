@@ -1024,6 +1024,9 @@ class SQLRAGService:
             # Store follow-up suggestion
             if response.get("followup_suggestions"):
                 metadata["followup_suggestions"] = response["followup_suggestions"]
+
+            if response.get("suggested_next_questions"):
+                metadata["suggested_next_questions"] = response["suggested_next_questions"]
             
             # Store visualization suggestions
             if response.get("chart_suggestions"):
