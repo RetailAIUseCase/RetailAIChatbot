@@ -23,4 +23,4 @@ sendgrid==6.12.5
 plotly==6.3.1
 pandas==2.3.3
 reportlab==4.4.4
-kaleido==0.2.1.post1
+kaleido==0.2.1
