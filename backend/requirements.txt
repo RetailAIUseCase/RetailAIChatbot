@@ -17,10 +17,10 @@ pgvector>=0.2.0
 # Document Processing Libraries
 PyPDF2==3.0.1
 python-docx==1.1.0
-simplejson
-fpdf2
+simplejson==3.20.1
+fpdf2==2.8.4
 sendgrid==6.12.5
-plotly
-pandas
-reportlab
-kaleido
+plotly==6.3.1
+pandas==2.3.3
+reportlab==4.4.4
+kaleido==0.2.1.post1
