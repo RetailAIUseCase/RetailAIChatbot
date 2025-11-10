@@ -87,7 +87,7 @@ class POWorkflowService:
             )
             # Start background task (non-blocking)
             asyncio.create_task(self._execute_workflow_steps(
-                workflow_id, user_id, project_id, order_date, user_query, conversation_history, business_rules, user_intent
+                workflow_id, user_id, project_id, order_date, user_query, conversation_context, business_rules, user_intent
             ))
             
             return {
@@ -526,8 +526,8 @@ class POWorkflowService:
                 
                 # Step 1: Check SKU shortfall (existing logic)
                 sku_result = await self._step1_check_sku_shortfall(
-                    user_id, project_id, order_date, trigger_query,
-                    conversation_context, business_rules, user_intent
+                    user_id, project_id, order_date, conversation_context, 
+                    business_rules, trigger_query, user_intent
                 )
                 
                 # Step 2: Check material shortfall (existing logic)
@@ -563,7 +563,7 @@ class POWorkflowService:
                         error=None
                     )
                 
-                sku_result = await self._step1_check_sku_shortfall(user_id, project_id, order_date, trigger_query, conversation_context, business_rules, user_intent)
+                sku_result = await self._step1_check_sku_shortfall(user_id, project_id, order_date, conversation_context, business_rules, trigger_query, user_intent)
                 
                 if not sku_result.get("has_shortfall", False):
                     await db.update_workflow(
@@ -596,7 +596,7 @@ class POWorkflowService:
                 )
                 
                 material_result = await self._step2_check_material_shortfall(
-                    user_id, project_id, order_date, sku_result["sku_shortfalls"], trigger_query, conversation_context, business_rules, user_intent
+                    user_id, project_id, order_date, sku_result["sku_shortfalls"], conversation_context, business_rules, user_intent, trigger_query
                 )
 
                 if not material_result.get("has_shortfall", False):
@@ -630,7 +630,7 @@ class POWorkflowService:
                 )
                 
                 procurement_result = await self._step3_get_procurement_costs(
-                    user_id, project_id, order_date, material_result["material_shortfalls"], trigger_query, conversation_context, business_rules, user_intent
+                    user_id, project_id, order_date, material_result["material_shortfalls"], conversation_context, business_rules, trigger_query, user_intent
                 )
                 order_numbers = sku_result.get("order_numbers", [])
                 
@@ -736,7 +736,7 @@ class POWorkflowService:
                 error=None
             )
             if po_result.get("pos_generated"):
-                email_result = await self._step5_process_emails_and_approvals(po_result["pos_generated"], business_rules, conversation_context)
+                email_result = await self._step5_process_emails_and_approvals(po_result["pos_generated"], conversation_context)
             else:
                 # No POs generated - mark as failed
                 await db.update_workflow(

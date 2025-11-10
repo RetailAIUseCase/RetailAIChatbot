@@ -328,38 +328,40 @@ class SQLRAGService:
         if conversation_history:
             context = "Previous Conversation Context:\n"
             for msg in conversation_history:  # Last 6 messages
+                # print(msg['intent'])
+                if for_po and (msg['intent'] is None or msg['intent'] in ['visualization_complete', 'visualization_pending']):
+                    continue
                 if msg['role'] == 'user':
                     context += f"User: {msg['content']}\n"
                 elif msg['role'] == 'assistant':
                     context += f"Assistant: {msg['content']}\n"
-                    if for_po:
-                        # Include the SQL query if available
-                        if msg.get('sql_query'):
-                            sql = msg['sql_query']
-                            if len(sql) > 300:
-                                sql = sql[:300] + "..."
-                            context += f"(Previous SQL: {sql})\n"
-                        # Include query intent
-                        if msg.get('intent'):
-                            context += f"Previous Intent: {msg['intent']}\n"
-                        if msg.get("metadata"):
-                            meta = msg["metadata"]
-                            # if isinstance(meta, str):
-                            #     try:
-                            #         meta = json.loads(meta)
-                            #     except json.JSONDecodeError:
-                            #         meta = {}  # fallback in case of corrupt data
-                            if "suggested_next_questions" in meta:
-                                context += f"Assistant suggested: {meta['suggested_next_questions']}\n"
-                            # Show chart type if generated
-                            if "chart" in meta and isinstance(meta['chart'], dict):
-                                chart_type = meta['chart'].get('chart_type', 'chart')
-                                context += f"(Assistant generated a {chart_type})\n"
-                            if "follow_up_action" in meta:
-                                fa = meta["follow_up_action"]
-                                context += f"Assistant executed a follow-up ({fa['action_type']}): {fa['executed_query']}\n"
+                    # Include the SQL query if available
+                    if msg.get('sql_query'):
+                        sql = msg['sql_query']
+                        if len(sql) > 300:
+                            sql = sql[:300] + "..."
+                        context += f"(Previous SQL: {sql})\n"
+                    # Include query intent
+                    if msg.get('intent'):
+                        context += f"Previous Intent: {msg['intent']}\n"
+                    if msg.get("metadata"):
+                        meta = msg["metadata"]
+                        # if isinstance(meta, str):
+                        #     try:
+                        #         meta = json.loads(meta)
+                        #     except json.JSONDecodeError:
+                        #         meta = {}  # fallback in case of corrupt data
+                        if "suggested_next_questions" in meta:
+                            context += f"Assistant suggested: {meta['suggested_next_questions']}\n"
+                        # Show chart type if generated
+                        if "chart" in meta and isinstance(meta['chart'], dict):
+                            chart_type = meta['chart'].get('chart_type', 'chart')
+                            context += f"(Assistant generated a {chart_type})\n"
+                        if "follow_up_action" in meta:
+                            fa = meta["follow_up_action"]
+                            context += f"Assistant executed a follow-up ({fa['action_type']}): {fa['executed_query']}\n"
                 context += "\n"
-        return context
+        return context if len(context)>30 else ""
     
     # ======================== Intent Detection ========================== 
     async def detect_query_intent(self, user_query: str, conversation_history: List[Dict]) -> str:
