@@ -67,7 +67,7 @@ class POWorkflowService:
             workflow_id = workflow_result["workflow_id"]
             business_rules = await self._extract_business_rules(user_id, project_id, user_query)
             from app.services.rag_sql_service import rag_sql_service
-            conversation_context = rag_sql_service._build_conversation_context(conversation_history[-8:])
+            conversation_context = rag_sql_service._build_conversation_context(conversation_history[-4:], for_po=True)
 
             # Extract user intent from query and conversation
             logger.info(f"🔍 Extracting user intent from: '{user_query}'")
