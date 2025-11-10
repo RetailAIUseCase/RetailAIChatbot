@@ -332,7 +332,7 @@ class SQLRAGService:
                     context += f"User: {msg['content']}\n"
                 elif msg['role'] == 'assistant':
                     context += f"Assistant: {msg['content']}\n"
-                    if not for_po:
+                    if for_po:
                         # Include the SQL query if available
                         if msg.get('sql_query'):
                             sql = msg['sql_query']
