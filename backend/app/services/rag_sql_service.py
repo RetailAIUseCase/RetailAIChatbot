@@ -222,22 +222,6 @@ class SQLRAGService:
         ORDER BY embedding <=> $1
         LIMIT $4
         """
-
-        # table_query = """
-        # SELECT 
-        #     table_name,
-        #     content_type,
-        #     content,
-        #     metadata,
-        #     (embedding <=> $1) as distance,
-        #     (1 - (embedding <=> $1)) as similarity
-        # FROM metadata_embeddings 
-        # WHERE user_id = $2 AND project_id = $3 AND content_type = 'table'
-        #     AND (1 - (embedding <=> $1)) >= 0.2  -- Similarity threshold
-        # ORDER BY embedding <=> $1
-        # LIMIT $4
-        # """
-        
         results = await connection.fetch(query, query_embedding, user_id, project_id, top_k, similarity_threshold)
         # print(results)
         return [
@@ -350,12 +334,13 @@ class SQLRAGService:
                     context += f"Assistant: {msg['content']}\n"
                     # Include the SQL query if available
                     if msg.get('sql_query'):
-                        context += f"Previous SQL Query: {msg['sql_query']}\n"
+                        sql = msg['sql_query']
+                        if len(sql) > 300:
+                            sql = sql[:300] + "..."
+                        context += f"(Previous SQL: {sql})\n"
                     # Include query intent
                     if msg.get('intent'):
                         context += f"Previous Intent: {msg['intent']}\n"
-                    if msg.get('content'):
-                        context += f"Previous SQL Query Final answer: {msg['content']}\n"
                     if msg.get("metadata"):
                         meta = msg["metadata"]
                         # if isinstance(meta, str):
@@ -365,6 +350,10 @@ class SQLRAGService:
                         #         meta = {}  # fallback in case of corrupt data
                         if "suggested_next_questions" in meta:
                             context += f"Assistant suggested: {meta['suggested_next_questions']}\n"
+                        # Show chart type if generated
+                        if "chart" in meta and isinstance(meta['chart'], dict):
+                            chart_type = meta['chart'].get('chart_type', 'chart')
+                            context += f"(Assistant generated a {chart_type})\n"
                         if "follow_up_action" in meta:
                             fa = meta["follow_up_action"]
                             context += f"Assistant executed a follow-up ({fa['action_type']}): {fa['executed_query']}\n"
@@ -943,8 +932,8 @@ class SQLRAGService:
         if relevant_data.get('business_logic'):
             business_context = f"\n\nBased on your business rules: {relevant_data['business_logic'][0]['content'][:200]}..." if relevant_data['business_logic'] else ""
         
-        # if relevant_data.get('references'):
-        #     reference_context = f"\n\nReferences: {', '.join(ref['content'][:200] for ref in relevant_data['references'])}..." if relevant_data['references'] else ""
+        if relevant_data.get('references'):
+            reference_context = f"\n\nReferences: {', '.join(ref['content'] for ref in relevant_data['references'])}..." if relevant_data['references'] else ""
         
         prompt = f"""You are a helpful assistant.
 
@@ -952,7 +941,7 @@ class SQLRAGService:
             SQL Query Executed:{sql_query}
             SQL Query Results: {json.dumps(query_results, indent=2, default=str)}
             The SQL query returned: {len(query_results)} rows
-            Business Context: {business_context}
+            Reference Context: {reference_context}
 
             Instructions:
             - Provide a clear, conversational summary of the results
@@ -1067,7 +1056,7 @@ class SQLRAGService:
         except Exception as e:
             logger.error(f"Error storing conversation: {e}")
 
-    async def get_conversation_history(self, conversation_id: str, user_id: int) -> List[Dict]:
+    async def get_conversation_history(self, conversation_id: str, user_id: int, for_llm: bool = True) -> List[Dict]:
         """Get conversation history from database"""
         try:
             messages = await db.get_conversation_messages(conversation_id, user_id)
@@ -1085,6 +1074,57 @@ class SQLRAGService:
                         meta = {}  # fallback for malformed JSON
                 elif meta is None:
                     meta = {}
+            
+                # Filter metadata inline based on use case
+                if for_llm and meta:
+                    # Create filtered copy for LLM
+                    filtered_meta = {}
+                    
+                    if 'suggested_next_questions' in meta and meta['suggested_next_questions']:
+                        filtered_meta['suggested_next_questions'] = meta['suggested_next_questions']
+                    
+                    # Keep chart TYPE only, strip heavy data
+                    if 'chart' in meta and isinstance(meta['chart'], dict):
+                        filtered_meta['chart'] = {
+                            'chart_type': meta['chart'].get('chart_type'),
+                            'title': meta['chart'].get('title'),
+                            'data_points': meta['chart'].get('data_points'),
+                        }
+                    
+                    # Keep followup text only
+                    if 'followup_suggestions' in meta and isinstance(meta['followup_suggestions'], list):
+                        filtered_meta['followup_suggestions'] = [
+                            s.get('text') if isinstance(s, dict) else s 
+                            for s in meta['followup_suggestions'][:5]
+                        ]
+                    
+                    # Keep chart suggestion types only
+                    if 'chart_suggestions' in meta and isinstance(meta['chart_suggestions'], list):
+                        filtered_meta['chart_suggestions'] = [
+                            {
+                                'chart_type': s.get('chart_type'),
+                                'reason': s.get('reason', '')[:200]
+                            }
+                            for s in meta['chart_suggestions'][:3]
+                        ]
+                    
+                    if '_pending_viz_data' in meta and isinstance(meta['_pending_viz_data'], dict):
+                        filtered_meta['_pending_viz_data'] = meta['_pending_viz_data']
+                    
+                    # # Keep data insights summary only
+                    # if 'data_insights' in meta:
+                    #     insights = meta['data_insights']
+                    #     if isinstance(insights, dict):
+                    #         filtered_meta['data_insights'] = {
+                    #             'row_count': insights.get('row_count'),
+                    #             'column_count': insights.get('column_count'),
+                    #         }
+                    
+                    # Keep follow-up action summary
+                    if 'follow_up_action' in meta and isinstance(meta['follow_up_action'], dict):
+                        filtered_meta['follow_up_action'] = meta['follow_up_action']
+                    
+                    meta = filtered_meta
                 conversation_history.append({
                     'role': msg['role'],
                     'content': msg['content'],
@@ -1696,7 +1736,7 @@ class SQLRAGService:
 
                                 User's response: {user_query}
 
-                                Determine which chart type the user selected. Respond with JSON:
+                                Determine which chart type the user selected or want. Respond with JSON:
                                 {{
                                 "selected_chart_type": "chart_type_name",
                                 "confidence": 0.95
