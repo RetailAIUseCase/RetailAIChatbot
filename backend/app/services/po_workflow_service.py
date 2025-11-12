@@ -1748,8 +1748,7 @@ class POWorkflowService:
         
         return "; ".join(summary_parts)
     
-    async def _step5_process_emails_and_approvals(self, pos_generated: List[Dict], conversation_context: List[Dict],
-        business_rules: Dict[str, Any]):
+    async def _step5_process_emails_and_approvals(self, pos_generated: List[Dict], conversation_context: List[Dict]):
         """Step 5: Process emails and approvals"""
         
         try:
