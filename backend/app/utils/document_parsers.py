@@ -681,12 +681,12 @@ class BusinessLogicParser(DocumentParser):
                     content = re.sub(r'\s+', ' ', content)
                     content = re.sub(r'\n+', ' ', content)
                     
-                    if content and len(content) > 10:
+                    if content:
                         formatted_rule = f"Rule {rule_number}: {content}"
                         temp_rules.append(formatted_rule)
                 
                 # If this pattern found good results, use them
-                if len(temp_rules) >= 2:
+                if len(temp_rules) > 0:
                     return temp_rules
         
         # Method 2: Fallback - Split and reconstruct approach
@@ -741,7 +741,7 @@ class BusinessLogicParser(DocumentParser):
                 content = re.sub(r'\s+', ' ', content)
                 content = re.sub(r'\n+', ' ', content)
                 
-                if content and len(content) > 15:
+                if content:
                     formatted_rule = f"Rule {rule_number}: {content}"
                     rules.append(formatted_rule)
         
